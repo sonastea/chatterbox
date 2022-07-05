@@ -1,11 +1,15 @@
 package main
 
 import (
+	"flag"
+
 	"github.com/sonastea/chatterbox/internal/config"
-	"github.com/sonastea/chatterbox/internal/server"
+	"github.com/sonastea/chatterbox/internal/pkg/box"
 )
 
 func main() {
+	flag.Parse()
+
 	cfg, err := config.NewConfig()
 	if err != nil {
 		return
@@ -16,7 +20,7 @@ func main() {
 		return
 	}
 
-	server := server.NewServer(srvCfg)
+	server := box.NewServer(srvCfg)
 
 	server.Start()
 }

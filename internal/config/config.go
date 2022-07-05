@@ -3,13 +3,13 @@ package config
 import (
 	"time"
 
-	"github.com/sonastea/chatterbox/internal/server"
+	"github.com/sonastea/chatterbox/internal/pkg/box"
 )
 
 type Config struct{}
 
-func (cfg *Config) HTTP() (*server.Config, error) {
-	return &server.Config{
+func (cfg *Config) HTTP() (*box.Config, error) {
+	return &box.Config{
 		Addr:         ":8080",
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
