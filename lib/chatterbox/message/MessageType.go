@@ -6,6 +6,8 @@ func (m messageType) String() string {
 	switch m {
 	case Normal:
 		return "normal"
+	case Broadcast:
+		return "broadcast"
 	case Command:
 		return "command"
 	case Server:
@@ -15,7 +17,8 @@ func (m messageType) String() string {
 }
 
 const (
-	Normal  messageType = "normal"
-	Command messageType = "command"
-	Server  messageType = "server"
+	Normal    messageType = "normal"
+	Broadcast messageType = "broadcast"
+	Command   messageType = "command"
+	Server    messageType = "server"
 )

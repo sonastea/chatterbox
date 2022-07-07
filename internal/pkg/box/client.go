@@ -1,19 +1,22 @@
 package box
 
 import (
+	"fmt"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/rs/xid"
+	"github.com/sonastea/chatterbox/lib/chatterbox/message"
 )
 
 var upgrader = websocket.Upgrader{
-	// Returning true for now, but should check origin.
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
-	CheckOrigin:     func(r *http.Request) bool { return true },
+	// Returning true for now, but should check origin.
+	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
 const (
@@ -31,55 +34,71 @@ const (
 )
 
 type Client struct {
-	ID   xid.ID
+	sync.RWMutex
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name"`
 	conn *websocket.Conn
-	hub  *Hub
+
+	hub   *Hub
+	rooms map[*Room]bool
+
 	send chan Message
 }
 
-func (c *Client) readPump() {
+func (client *Client) GetID() string {
+	return client.ID
+}
+
+func (client *Client) readPump() {
 	defer func() {
-		c.hub.unregister <- c
-		c.conn.Close()
+		client.hub.unregister <- client
+		for room := range client.rooms {
+			room.unregister <- client
+		}
+		client.conn.Close()
+		close(client.send)
 	}()
 
-	c.conn.SetReadLimit(maxMessageSize)
-	c.conn.SetReadDeadline(time.Now().Add(pongWait))
-	c.conn.SetPongHandler(func(string) error { c.conn.SetReadDeadline(time.Now().Add(pongWait)); return nil })
+	client.conn.SetReadLimit(maxMessageSize)
+	client.conn.SetReadDeadline(time.Now().Add(pongWait))
+	client.conn.SetPongHandler(func(string) error { client.conn.SetReadDeadline(time.Now().Add(pongWait)); return nil })
+
 	for {
-		message := &Message{}
-		err := c.conn.ReadJSON(message)
+		message := &Message{Sender: client, Room: &Room{ID: "0"}}
+		err := client.conn.ReadJSON(message)
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				log.Printf("error: %v", err)
 			}
 			break
 		}
-		c.hub.broadcast <- *message
+
+		client.handleIncomingMessage(*message)
 	}
 }
 
-func (c *Client) writePump() {
+func (client *Client) writePump() {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()
-		c.conn.Close()
+		client.conn.Close()
 	}()
+
 	for {
 		select {
-		case message, ok := <-c.send:
-			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+		case message, ok := <-client.send:
+			client.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if !ok {
 				// The hub closed the channel.
-				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+				client.conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
 
-			c.conn.WriteJSON(message)
+			client.conn.WriteJSON(message)
 
 		case <-ticker.C:
-			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
-			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+			client.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if err := client.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
 			}
 		}
@@ -94,14 +113,87 @@ func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	}
 
 	client := &Client{
-		ID:   xid.New(),
-		hub:  hub,
-		conn: conn,
-		send: make(chan Message),
+		ID:    xid.New().String(),
+		hub:   hub,
+		conn:  conn,
+		rooms: make(map[*Room]bool),
+		send:  make(chan Message),
 	}
 
 	client.hub.register <- client
 
 	go client.writePump()
 	go client.readPump()
+}
+
+func (client *Client) handleIncomingMessage(msg Message) {
+	switch msg.Type {
+	case message.Normal.String():
+		client.handleSendMessage(msg)
+
+	case message.Command.String():
+		switch msg.Action {
+		case message.JoinRoom.String():
+			client.handleJoinRoom(msg)
+		case message.LeaveRoom.String():
+			client.handleLeaveRoom(msg)
+		}
+	}
+}
+
+func (client *Client) handleSendMessage(msg Message) {
+	msg.Action = message.SendMessage.String()
+	roomID := msg.Room.GetID()
+
+	if room := client.hub.findRoomByID(roomID); room != nil {
+		msg.Sender = client
+		room.broadcast <- msg
+	}
+}
+
+func (client *Client) handleJoinRoom(msg Message) {
+	roomName := msg.Room.GetName()
+	room := client.hub.findRoomByName(roomName)
+	if room == nil {
+		room = client.hub.createRoom(roomName, false)
+	}
+
+	if !client.isInRoom(room) {
+		client.rooms[room] = true
+		room.register <- client
+		client.notifyRoomJoined(room, client)
+	}
+}
+
+func (client *Client) handleLeaveRoom(msg Message) {
+	room := client.hub.findRoomByID(msg.Room.ID)
+	if room == nil {
+		return
+	}
+
+	if _, ok := client.rooms[room]; ok {
+		delete(client.rooms, room)
+	}
+
+	room.unregister <- client
+}
+
+func (client *Client) isInRoom(room *Room) bool {
+	if _, ok := client.rooms[room]; ok {
+		return true
+	}
+
+	return false
+}
+
+func (client *Client) notifyRoomJoined(room *Room, sender *Client) {
+	message := Message{
+		Type:   string(message.Server),
+		Action: string(message.NotifyJoinRoomMessage),
+		Room:   room,
+		Body:   fmt.Sprintf("%v joined %v", sender.GetID(), room.GetName()),
+		Sender: broker,
+	}
+
+	client.send <- message
 }
