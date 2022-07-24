@@ -18,3 +18,7 @@ server
 
 # Go workspace file
 go.work
+
+# Env files
+.env
+.envrc
