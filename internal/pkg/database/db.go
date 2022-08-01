@@ -41,3 +41,12 @@ func InitDB() error {
 	log.Printf("Close sql connection\n")
 	return nil
 }
+
+func NewConnPool() *pgxpool.Pool {
+	pool, err := pgxpool.Connect(context.Background(), os.Getenv("DATABASE_URL"))
+	if err != nil {
+		panic("Unable to connect to database")
+	}
+
+	return pool
+}

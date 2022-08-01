@@ -1,6 +1,7 @@
 package box
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/rs/xid"
+	"github.com/sonastea/chatterbox/internal/pkg/models"
 	"github.com/sonastea/chatterbox/lib/chatterbox/message"
 )
 
@@ -18,6 +20,8 @@ var upgrader = websocket.Upgrader{
 	// Returning true for now, but should check origin.
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
+
+var newLine = ([]byte{'\n'})
 
 const (
 	// Time allowed to write a message to the peer.
@@ -30,23 +34,42 @@ const (
 	pingPeriod = (pongWait * 9) / 10
 
 	// Maximum message size allowed from peer.
-	maxMessageSize = 512
+	maxMessageSize = 1000
 )
 
 type Client struct {
 	sync.RWMutex
-	ID   string `json:"id,omitempty"`
-	Name string `json:"name"`
-	conn *websocket.Conn
+	Id       int    `json:"id,string,omitempty"`
+	Xid      string `json:"xid"`
+	Name     string `json:"name,omitempty"`
+	Email    string `json:"email,omitempty"`
+	Password string `json:"password,omitempty"`
+	conn     *websocket.Conn
 
 	hub   *Hub
 	rooms map[*Room]bool
 
-	send chan Message
+	send chan []byte
 }
 
-func (client *Client) GetID() string {
-	return client.ID
+func (client *Client) GetId() int {
+	return client.Id
+}
+
+func (client *Client) GetXid() string {
+	return client.Xid
+}
+
+func (client *Client) GetName() string {
+	return client.Name
+}
+
+func (client *Client) GetEmail() string {
+	return client.Email
+}
+
+func (client *Client) GetPassword() string {
+	return client.Password
 }
 
 func (client *Client) readPump() {
@@ -55,8 +78,8 @@ func (client *Client) readPump() {
 		for room := range client.rooms {
 			room.unregister <- client
 		}
-		client.conn.Close()
 		close(client.send)
+		client.conn.Close()
 	}()
 
 	client.conn.SetReadLimit(maxMessageSize)
@@ -64,8 +87,7 @@ func (client *Client) readPump() {
 	client.conn.SetPongHandler(func(string) error { client.conn.SetReadDeadline(time.Now().Add(pongWait)); return nil })
 
 	for {
-		message := &Message{Sender: client, Room: &Room{ID: "0"}}
-		err := client.conn.ReadJSON(message)
+		_, message, err := client.conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				log.Printf("error: %v", err)
@@ -73,7 +95,7 @@ func (client *Client) readPump() {
 			break
 		}
 
-		client.handleIncomingMessage(*message)
+		client.handleIncomingMessage(message)
 	}
 }
 
@@ -86,7 +108,7 @@ func (client *Client) writePump() {
 
 	for {
 		select {
-		case message, ok := <-client.send:
+		case msg, ok := <-client.send:
 			client.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if !ok {
 				// The hub closed the channel.
@@ -94,7 +116,22 @@ func (client *Client) writePump() {
 				return
 			}
 
-			client.conn.WriteJSON(message)
+			w, err := client.conn.NextWriter(websocket.TextMessage)
+			if err != nil {
+				return
+			}
+
+			w.Write(msg)
+
+			n := len(client.send)
+			for i := 0; i < n; i++ {
+				w.Write(newLine)
+				w.Write(<-client.send)
+			}
+
+			if err := w.Close(); err != nil {
+				return
+			}
 
 		case <-ticker.C:
 			client.conn.SetWriteDeadline(time.Now().Add(writeWait))
@@ -111,13 +148,17 @@ func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 		log.Println(err)
 		return
 	}
+	newId := xid.New().String()
 
 	client := &Client{
-		ID:    xid.New().String(),
-		hub:   hub,
-		conn:  conn,
-		rooms: make(map[*Room]bool),
-		send:  make(chan Message),
+		Xid:      newId,
+		Name:     newId,
+		Email:    newId + "example.com",
+		Password: "",
+		hub:      hub,
+		conn:     conn,
+		rooms:    make(map[*Room]bool),
+		send:     make(chan []byte),
 	}
 
 	client.hub.register <- client
@@ -126,36 +167,44 @@ func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	go client.readPump()
 }
 
-func (client *Client) handleIncomingMessage(msg Message) {
-	switch msg.Type {
+func (client *Client) handleIncomingMessage(msg []byte) {
+	var m Message
+	if err := json.Unmarshal(msg, &m); err != nil {
+		log.Printf("Error on unmarshal JSON message %s", err)
+		return
+	}
+	m.Sender = client
+
+	switch m.Type {
 	case message.Normal.String():
-		client.handleSendMessage(msg)
+		client.handleSendMessage(m)
 
 	case message.Command.String():
-		switch msg.Action {
+		switch m.Action {
 		case message.JoinRoom.String():
-			client.handleJoinRoom(msg)
+			client.handleJoinRoom(m)
 		case message.LeaveRoom.String():
-			client.handleLeaveRoom(msg)
+			client.handleLeaveRoom(m)
 		}
 	}
 }
 
 func (client *Client) handleSendMessage(msg Message) {
 	msg.Action = message.SendMessage.String()
-	roomID := msg.Room.GetID()
+	roomXid := msg.Room.GetXid()
 
-	if room := client.hub.findRoomByID(roomID); room != nil {
+	if room := client.hub.findRoomByXid(roomXid); room != nil {
 		msg.Sender = client
-		room.broadcast <- msg
+		room.broadcast <- &msg
 	}
 }
 
-func (client *Client) handleJoinRoom(msg Message) {
+func (client *Client) handleJoinRoom(msg Message) *Room {
 	roomName := msg.Room.GetName()
-	room := client.hub.findRoomByName(roomName)
+
+	room := client.hub.findRoomByName(client, roomName)
 	if room == nil {
-		room = client.hub.createRoom(roomName, false)
+		room = client.hub.createRoom(client, roomName, false) // rooms are not private for now
 	}
 
 	if !client.isInRoom(room) {
@@ -163,10 +212,12 @@ func (client *Client) handleJoinRoom(msg Message) {
 		room.register <- client
 		client.notifyRoomJoined(room, client)
 	}
+
+	return room
 }
 
 func (client *Client) handleLeaveRoom(msg Message) {
-	room := client.hub.findRoomByID(msg.Room.ID)
+	room := client.hub.findRoomByXid(msg.Room.Xid)
 	if room == nil {
 		return
 	}
@@ -186,14 +237,14 @@ func (client *Client) isInRoom(room *Room) bool {
 	return false
 }
 
-func (client *Client) notifyRoomJoined(room *Room, sender *Client) {
-	message := Message{
+func (client *Client) notifyRoomJoined(room *Room, sender models.User) {
+	msg := Message{
 		Type:   string(message.Server),
 		Action: string(message.NotifyJoinRoomMessage),
 		Room:   room,
-		Body:   fmt.Sprintf("%v joined %v", sender.GetID(), room.GetName()),
+		Body:   fmt.Sprintf("%v joined %v", sender.GetXid(), room.GetName()),
 		Sender: broker,
 	}
 
-	client.send <- message
+	client.send <- msg.encode()
 }
