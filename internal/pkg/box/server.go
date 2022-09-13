@@ -1,9 +1,16 @@
 package box
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
+
+	"github.com/sonastea/chatterbox/internal/pkg/models"
 )
 
 type Config struct {
@@ -18,8 +25,8 @@ type Server struct {
 	config *Config
 }
 
-func NewServer(cfg *Config) *Server {
-	hub := NewHub()
+func NewServer(cfg *Config, roomStore models.RoomStore, userStore models.UserStore) *Server {
+	hub := NewHub(roomStore, userStore)
 	go hub.Run()
 
 	router := http.NewServeMux()
@@ -41,6 +48,31 @@ func NewServer(cfg *Config) *Server {
 }
 
 func (s *Server) Start() {
+	_, cancel := context.WithCancel(context.Background())
+
 	fmt.Printf("Listening on %s\n", s.server.Addr)
-	s.server.ListenAndServe()
+	go func() {
+		if err := s.server.ListenAndServe(); err != http.ErrServerClosed {
+			log.Fatalf("HTTP server ListenAndServe: %v", err)
+		}
+	}()
+
+	cleanup := make(chan os.Signal, 1)
+	signal.Notify(cleanup, os.Interrupt, syscall.SIGINT)
+	<-cleanup
+
+	go func() {
+		<-cleanup
+	}()
+
+	cleansedCtx, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelShutdown()
+
+	if err := s.server.Shutdown(cleansedCtx); err != nil {
+		log.Printf("Shutdown error: %v\n", err)
+	} else {
+		log.Printf("Shutdown successful\n")
+	}
+
+	cancel()
 }
