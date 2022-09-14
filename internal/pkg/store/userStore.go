@@ -42,7 +42,6 @@ func (user *User) GetPassword() string {
 }
 
 func (us *UserStore) AddUser(client models.User) models.User {
-	fmt.Println("AddUserToUserStore")
 	stmt, err := us.DB.Query(
 		context.Background(),
 		`INSERT INTO chatterbox."User"(xid, name, email, password) VALUES($1, $2, $3, $4)`,

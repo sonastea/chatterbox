@@ -1,8 +1,9 @@
-CREATE SCHEMA chatterbox
+CREATE SCHEMA IF NOT EXISTS chatterbox
     AUTHORIZATION postgres;
 
+SET search_path TO chatterbox;
 
-CREATE TABLE chatterbox."User" (
+CREATE TABLE "User" (
 	id int NOT NULL GENERATED ALWAYS AS IDENTITY,
     xid varchar NOT NULL,
 	"name" varchar NOT NULL,
@@ -14,7 +15,7 @@ CREATE TABLE chatterbox."User" (
 );
 
 
-CREATE TABLE chatterbox."Room" (
+CREATE TABLE "Room" (
 	id int NOT NULL GENERATED ALWAYS AS IDENTITY,
     xid varchar NOT NULL,
 	private boolean NOT NULL DEFAULT false,
@@ -29,7 +30,7 @@ CREATE TABLE chatterbox."Room" (
 );
 
 
-CREATE TABLE chatterbox."Message" (
+CREATE TABLE "Message" (
 	id int NOT NULL GENERATED ALWAYS AS IDENTITY,
 	body varchar NULL,
 	room_id varchar NOT NULL,
