@@ -45,15 +45,15 @@ jobs:
     steps:
       -
         name: Deploy in EC2
-      -
         uses: actions/checkout@v3
         env:
           hostname: ${{ secrets.AWS_HOSTNAME }}
           username: ${{ secrets.AWS_USERNAME }}
           key: ${{ secrets.AWS_PRIVATE_KEY }}
           database_url: ${{ secrets.DATABASE_URL }}
+      -
         run: |
-          echo "$key" > private_key && chmod 400 private_key &&
+          echo "$key" > private_key.pem && chmod 400 private_key.pem &&
           ssh -o StrictHostKeyChecking=no -i private_key ${username}@${hostname} '
             cd /home/ubuntu/chatterbox &&
             sudo docker pull sonastea/chatterbox:latest &&
