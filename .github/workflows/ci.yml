@@ -2,8 +2,6 @@ name: ci/cd
 
 on:
   push:
-    branches:
-      - "master"
     tags:
       - "v*.*.*"
   pull_request:
@@ -53,7 +51,7 @@ jobs:
           database_url: ${{ secrets.DATABASE_URL }}
       -
         run: |
-          echo "$key" > private_key.pem && chmod 400 private_key.pem &&
+          echo "$key" > private_key.pem && chmod 400 private_key.pem
           ssh -o StrictHostKeyChecking=no -i private_key.pem ${username}@${hostname} '
             cd /home/ubuntu/chatterbox &&
             sudo docker pull sonastea/chatterbox:latest &&
