@@ -40,15 +40,16 @@ jobs:
   ecs-deploy:
     needs: dockerhub
     runs-on: ubuntu-latest
+    env:
+      HOSTNAME: ${{ secrets.AWS_HOSTNAME }}
+      USERNAME: ${{ secrets.AWS_USERNAME }}
+      KEY: ${{ secrets.AWS_PRIVATE_KEY }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }
     steps:
-      - name: Deploy in EC2
-      - uses: actions/checkout@v3
+      - 
+        name: Deploy in EC2
+        uses: actions/checkout@v3
       -
-        env:
-          hostname: ${{ secrets.AWS_HOSTNAME }}
-          username: ${{ secrets.AWS_USERNAME }}
-          key: ${{ secrets.AWS_PRIVATE_KEY }}
-          database_url: ${{ secrets.DATABASE_URL }}
         run: |
           echo "$key" > private_key.pem && sudo chmod 400 private_key.pem
           ssh -o StrictHostKeyChecking=no -i private_key.pem ${username}@${hostname} '
