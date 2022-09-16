@@ -63,7 +63,7 @@ jobs:
         name: Deploy and run docker container
         uses: appleboy/ssh-action@master
         env:
-          database_url: ${{ github.DATABASE_URL }}
+          database_url: ${{ secrets.DATABASE_URL }}
         with:
           host: ${{ secrets.AWS_HOSTNAME }}
           username: ${{ secrets.AWS_USERNAME }}
