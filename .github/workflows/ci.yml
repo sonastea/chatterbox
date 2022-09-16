@@ -42,24 +42,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       -
-        name: Pull image and stop docker container
+        name: Pull image and stop container
         uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.AWS_HOSTNAME }}
           username: ${{ secrets.AWS_USERNAME }}
           key: ${{ secrets.AWS_PRIVATE_KEY }}
+          envs: database_url
           script: |
             cd /home/ubuntu/chatterbox
             sudo docker pull sonastea/chatterbox:latest
             sudo docker stop chatterbox
-            sudo docker rm chatterbox
+            sudo docker rm -f chatterbox
 
   ec2-deployment:
     needs: ec2-prep
     runs-on: ubuntu-latest
     steps:
       -
-        name: Run and deploy docker container
+        name: Deploy and run docker container
         uses: appleboy/ssh-action@master
         env:
           database_url: ${{ github.DATABASE_URL }}
@@ -69,4 +70,5 @@ jobs:
           key: ${{ secrets.AWS_PRIVATE_KEY }}
           envs: database_url
           script: |
+            sudo docker run -e DATABASE_URL="$database_url" --name chatterbox --restart=always -d -p 8080:8080 -t chatterbox:latest
             sudo docker ps
