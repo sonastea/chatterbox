@@ -1,0 +1,64 @@
+name: ci/cd
+
+on:
+  push:
+    branches: 
+      - "master" 
+    tags: 
+      - "v*.*.*"
+  pull_request:
+    branches: 
+      - "master"
+
+jobs:
+  dockerhub:
+    runs-on: ubuntu-latest  
+    steps:
+    - 
+      name: Checkout
+      uses: actions/checkout@v3
+    -
+      name: Docker meta
+      id: meta
+      uses: docker/metadata-action@v4
+      with:
+        images: sonastea/chatterbox
+    - 
+      name: Login to DockerHub
+      if: github.event_name != "pull_request"
+      uses: docker/login-action@v2
+      with:
+        username: ${{ secrets.DOCKER_HUB.USERNAME }}
+        password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
+    -
+      name: Build and push to DockerHub
+      uses: docker/build-push-action@v3
+      with:
+        context: .
+        push: ${{ github.event_name != "pull_request" }}
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+  
+  ecs-deploy:
+    needs: dockerhub
+    runs-on: ubuntu-latest
+    steps:
+      - 
+        name: Deploy in EC2
+        uses: actions/checkout@v3
+      -
+        env:
+          hostname: ${{ secrets.AWS_HOSTNAME }}
+          username: ${{ secrets.AWS_USERNAME }}
+          key: ${{ secrets.AWS_PRIVATE_KEY }}
+          database_url: ${{ secrets.DATABASE_URL }}
+        run: |
+          echo "$key" > key && chmod 400 key
+          ssh -o StrictHostKeyChecking=no -i key ${username}@${hostname} '
+            cd /home/ubuntu/chatterbox &&
+            sudo docker pull sonastea/chatterbox:latest &&
+            sudo docker stop chatterbox &&
+            sudo docker rm chatterbox &&
+            sudo docker run -e DATABASE_URL="${database_url}" --name chatterbox --restart=always -d -p 8080:8080 chatterbox &&
+            sudo docker ps
+          ' 
