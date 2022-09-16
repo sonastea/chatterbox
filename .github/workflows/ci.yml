@@ -44,7 +44,7 @@ jobs:
       HOSTNAME: ${{ secrets.AWS_HOSTNAME }}
       USERNAME: ${{ secrets.AWS_USERNAME }}
       KEY: ${{ secrets.AWS_PRIVATE_KEY }}
-      DATABASE_URL: ${{ secrets.DATABASE_URL }
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
     steps:
       - 
         name: Deploy in EC2
