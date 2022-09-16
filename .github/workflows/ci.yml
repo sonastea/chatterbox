@@ -54,7 +54,7 @@ jobs:
       -
         run: |
           echo "$key" > private_key.pem && chmod 400 private_key.pem &&
-          ssh -o StrictHostKeyChecking=no -i private_key ${username}@${hostname} '
+          ssh -o StrictHostKeyChecking=no -i private_key.pem ${username}@${hostname} '
             cd /home/ubuntu/chatterbox &&
             sudo docker pull sonastea/chatterbox:latest &&
             sudo docker stop chatterbox &&
