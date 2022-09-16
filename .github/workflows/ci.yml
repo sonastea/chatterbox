@@ -70,5 +70,5 @@ jobs:
           key: ${{ secrets.AWS_PRIVATE_KEY }}
           envs: database_url
           script: |
-            sudo docker run -e DATABASE_URL="$database_url" --name chatterbox --restart=always -d -p 8080:8080 -t chatterbox:latest
+            sudo docker run -e DATABASE_URL="$database_url" --name chatterbox --restart=always -d -p 8080:8080 -t sonastea/chatterbox:latest
             sudo docker ps
