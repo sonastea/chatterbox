@@ -199,7 +199,7 @@ func (client *Client) handleSendMessage(msg Message) {
 	}
 }
 
-func (client *Client) handleJoinRoom(msg Message) *Room {
+func (client *Client) handleJoinRoom(msg Message) {
 	roomName := msg.Room.GetName()
 
 	room := client.hub.findRoomByName(client, roomName)
@@ -207,13 +207,16 @@ func (client *Client) handleJoinRoom(msg Message) *Room {
 		room = client.hub.createRoom(client, roomName, false) // rooms are not private for now
 	}
 
+    if client.isInRoom(room) {
+		client.notifyRoomJoined(room, client)
+        return
+    }
+
 	if !client.isInRoom(room) {
 		client.rooms[room] = true
 		room.register <- client
 		client.notifyRoomJoined(room, client)
 	}
-
-	return room
 }
 
 func (client *Client) handleLeaveRoom(msg Message) {
