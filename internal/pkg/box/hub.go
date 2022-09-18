@@ -165,9 +165,6 @@ func (hub *Hub) runRoomFromStore(client *Client, name string) *Room {
 	// create room if it doesn't exist in roomStore
 	if dbRoom == nil {
 		room = hub.createRoom(client, name, false) // rooms are not private for now
-
-		go room.Run()
-		hub.rooms[room] = true
 	} else {
 		// room exists, create room struct, run it, and add to rooms map
 		room = &Room{
@@ -182,8 +179,8 @@ func (hub *Hub) runRoomFromStore(client *Client, name string) *Room {
 			broadcast:   make(chan *Message),
 		}
 
-		go room.Run()
-		hub.rooms[room] = true
+        go room.Run()
+        hub.rooms[room] = true
 	}
 
 	return room

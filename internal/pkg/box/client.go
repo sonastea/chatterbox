@@ -203,14 +203,11 @@ func (client *Client) handleJoinRoom(msg Message) {
 	roomName := msg.Room.GetName()
 
 	room := client.hub.findRoomByName(client, roomName)
-	if room == nil {
-		room = client.hub.createRoom(client, roomName, false) // rooms are not private for now
-	}
 
-    if client.isInRoom(room) {
+	if client.isInRoom(room) {
 		client.notifyRoomJoined(room, client)
-        return
-    }
+		return
+	}
 
 	if !client.isInRoom(room) {
 		client.rooms[room] = true
@@ -245,7 +242,7 @@ func (client *Client) notifyRoomJoined(room *Room, sender models.User) {
 		Type:   string(message.Server),
 		Action: string(message.NotifyJoinRoomMessage),
 		Room:   room,
-		Body:   fmt.Sprintf("%v joined %v", sender.GetXid(), room.GetName()),
+		Body:   fmt.Sprintf("%v joined %v.", sender.GetXid(), room.GetName()),
 		Sender: broker,
 	}
 
