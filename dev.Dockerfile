@@ -13,10 +13,8 @@ RUN go mod download
 
 COPY . .
 
-WORKDIR /opt/chatterbox/cmd/server
+RUN go build ./cmd/server
 
-RUN go build
-
-EXPOSE 8080
+EXPOSE 8443
 
 CMD ["./server"]

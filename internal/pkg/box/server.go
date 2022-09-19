@@ -25,6 +25,11 @@ type Server struct {
 	config *Config
 }
 
+var (
+	tlsCert = ("./certs/chatterbox.crt")
+	tlsKey  = ("./certs/chatterbox.key")
+)
+
 func NewServer(cfg *Config, roomStore models.RoomStore, userStore models.UserStore) *Server {
 	hub := NewHub(roomStore, userStore)
 	go hub.Run()
@@ -52,8 +57,8 @@ func (s *Server) Start() {
 
 	fmt.Printf("Listening on %s\n", s.server.Addr)
 	go func() {
-		if err := s.server.ListenAndServe(); err != http.ErrServerClosed {
-			log.Fatalf("HTTP server ListenAndServe: %v", err)
+		if err := s.server.ListenAndServeTLS(tlsCert, tlsKey); err != http.ErrServerClosed {
+			log.Fatalf("HTTPS server ListenAndServe: %v", err)
 		}
 	}()
 

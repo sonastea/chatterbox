@@ -18,9 +18,9 @@ WORKDIR /opt/chatterbox/cmd/server
 RUN go build -o server
 
 FROM alpine:3
-COPY --from=builder /opt/chatterbox/sql /opt/sql
-COPY --from=builder /opt/chatterbox/cmd/server/server /opt/server
-EXPOSE 8080
+COPY --from=builder /opt/chatterbox/sql /opt/chatterbox/sql
+COPY --from=builder /opt/chatterbox/cmd/server/server /opt/chatterbox/server
+EXPOSE 8443
 
 WORKDIR /opt
 CMD ["./server"]

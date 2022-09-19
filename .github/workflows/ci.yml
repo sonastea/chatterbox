@@ -63,12 +63,12 @@ jobs:
         name: Deploy and run docker container
         uses: appleboy/ssh-action@master
         env:
-          URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         with:
           host: ${{ secrets.AWS_HOSTNAME }}
           username: ${{ secrets.AWS_USERNAME }}
           key: ${{ secrets.AWS_PRIVATE_KEY }}
-          envs: URL
+          envs: DATABASE_URL
           script: |
-            sudo docker run -e DATABASE_URL=$URL --name chatterbox --restart unless-stopped -d -p 80:8080 -t sonastea/chatterbox:latest
+            sudo docker run -v /opt/ssl/certs:/opt/chatterbox/server/certs -e DATABASE_URL=$DATABASE_URL --name chatterbox --restart unless-stopped -d -p 443:8443 -t sonastea/chatterbox:latest
             sudo docker ps

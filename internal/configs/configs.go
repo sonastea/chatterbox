@@ -13,7 +13,7 @@ type Configs struct {
 
 func (cfg *Configs) HTTP() (*box.Config, error) {
 	return &box.Config{
-		Addr:         ":8080",
+        Addr:         ":8443",
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  60 * time.Second,

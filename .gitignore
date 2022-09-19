@@ -19,6 +19,9 @@ server
 # Go workspace file
 go.work
 
+# Certificates files
+*certs/
+
 # Env files
 .env
 .envrc
