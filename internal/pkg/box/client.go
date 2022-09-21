@@ -18,7 +18,10 @@ var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	// Returning true for now, but should check origin.
-	CheckOrigin: func(r *http.Request) bool { return true },
+	CheckOrigin: func(r *http.Request) bool {
+		log.Printf("Origin %v\n", r.Header.Get("Origin"))
+		return true
+	},
 }
 
 var newLine = ([]byte{'\n'})
