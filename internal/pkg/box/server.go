@@ -26,8 +26,8 @@ type Server struct {
 }
 
 var (
-	tlsCert = ("./certs/chatterbox.crt")
-	tlsKey  = ("./certs/chatterbox.key")
+	tlsCert = ("./certs/chatterbox-cert.pem")
+	tlsKey  = ("./certs/chatterbox-key.pem")
 )
 
 func NewServer(cfg *Config, roomStore models.RoomStore, userStore models.UserStore) *Server {

@@ -20,7 +20,8 @@ RUN go build -o server
 FROM alpine:3
 COPY --from=builder /opt/chatterbox/sql /opt/chatterbox/sql
 COPY --from=builder /opt/chatterbox/cmd/server/server /opt/chatterbox/server
+RUN mkdir /opt/chatterbox/certs
 EXPOSE 8443
 
-WORKDIR /opt
+WORKDIR /opt/chatterbox
 CMD ["./server"]
