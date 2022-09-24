@@ -4,25 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"net/http"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/rs/xid"
 	"github.com/sonastea/chatterbox/internal/pkg/models"
 	"github.com/sonastea/chatterbox/lib/chatterbox/message"
 )
-
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	// Returning true for now, but should check origin.
-	CheckOrigin: func(r *http.Request) bool {
-		log.Printf("Origin %v\n", r.Header.Get("Origin"))
-		return true
-	},
-}
 
 var newLine = ([]byte{'\n'})
 
@@ -146,31 +134,6 @@ func (client *Client) writePump() {
 			}
 		}
 	}
-}
-
-func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Println(err)
-		return
-	}
-	newId := xid.New().String()
-
-	client := &Client{
-		Xid:      newId,
-		Name:     newId,
-		Email:    newId + "example.com",
-		Password: "",
-		hub:      hub,
-		conn:     conn,
-		rooms:    make(map[*Room]bool),
-		send:     make(chan []byte),
-	}
-
-	client.hub.register <- client
-
-	go client.writePump()
-	go client.readPump()
 }
 
 func (client *Client) handleIncomingMessage(msg []byte) {

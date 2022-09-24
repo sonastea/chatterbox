@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gorilla/websocket"
+	"github.com/rs/xid"
 	"github.com/sonastea/chatterbox/internal/pkg/models"
 )
 
@@ -28,6 +30,16 @@ type Server struct {
 var (
 	tlsCert = ("./certs/chatterbox-cert.pem")
 	tlsKey  = ("./certs/chatterbox-key.pem")
+
+	upgrader = websocket.Upgrader{
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+		// Returning true for now, but should check origin.
+		CheckOrigin: func(r *http.Request) bool {
+			log.Printf("Origin %v\n", r.Header.Get("Origin"))
+			return true
+		},
+	}
 )
 
 func NewServer(cfg *Config, roomStore models.RoomStore, userStore models.UserStore) *Server {
@@ -36,7 +48,7 @@ func NewServer(cfg *Config, roomStore models.RoomStore, userStore models.UserSto
 
 	router := http.NewServeMux()
 	router.Handle("/ws", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ServeWs(hub, w, r)
+		serveWs(hub, w, r)
 	}))
 
 	srv := &http.Server{
@@ -50,6 +62,31 @@ func NewServer(cfg *Config, roomStore models.RoomStore, userStore models.UserSto
 	s := &Server{server: srv, config: cfg}
 
 	return s
+}
+
+func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	newId := xid.New().String()
+
+	client := &Client{
+		Xid:      newId,
+		Name:     newId,
+		Email:    newId + "example.com",
+		Password: "",
+		hub:      hub,
+		conn:     conn,
+		rooms:    make(map[*Room]bool),
+		send:     make(chan []byte),
+	}
+
+	client.hub.register <- client
+
+	go client.writePump()
+	go client.readPump()
 }
 
 func (s *Server) Start() {

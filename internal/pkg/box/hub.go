@@ -179,8 +179,8 @@ func (hub *Hub) runRoomFromStore(client *Client, name string) *Room {
 			broadcast:   make(chan *Message),
 		}
 
-        go room.Run()
-        hub.rooms[room] = true
+		go room.Run()
+		hub.rooms[room] = true
 	}
 
 	return room
