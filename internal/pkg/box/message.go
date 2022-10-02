@@ -24,6 +24,13 @@ func (message *Message) encode() []byte {
 	return json
 }
 
+func (message *Message) string() string {
+	var msg string
+	json.Unmarshal(message.encode(), &msg)
+
+	return msg
+}
+
 func (message *Message) UnmarshalJSON(data []byte) error {
 	type Alias Message
 	msg := &struct {

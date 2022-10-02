@@ -1,12 +1,53 @@
 package box
 
 import (
+	"context"
+	"log"
+	"strings"
+
 	"github.com/go-redis/redis/v8"
 )
 
-var Redis *redis.Client
+type Realm string
 
-func InitRedisClient(opt *redis.Options) {
-	r := redis.NewClient(opt)
-	Redis = r
+type PubSub struct {
+	conn          *redis.Client
+	subs          []Realm
+	subscriptions map[Realm]*redis.PubSub
+}
+
+var ctx = context.Background()
+
+func newPubSub(opt *redis.Options) (*PubSub, error) {
+	conn := redis.NewClient(opt)
+
+	subs := []Realm{
+		"room.*",
+	}
+
+	pubSub := &PubSub{
+		conn:          conn,
+		subs:          subs,
+		subscriptions: make(map[Realm]*redis.PubSub),
+	}
+
+	for _, sub := range subs {
+		ch := conn.PSubscribe(ctx, string(sub))
+		pubSub.subscriptions[sub] = ch
+	}
+
+	return pubSub, nil
+}
+
+func (hub *Hub) listenPubSub() {
+	for {
+		select {
+		case msg := <-hub.pubsub.subscriptions["room.*"].Channel():
+			roomXid := strings.SplitN(msg.Channel, ".", 2)
+			if len(roomXid) < 2 {
+				log.Printf("Missing room XID %v \n", msg.String())
+			}
+			hub.sendToRoom(roomXid[1], msg.Payload)
+		}
+	}
 }

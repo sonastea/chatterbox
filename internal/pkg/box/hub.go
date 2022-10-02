@@ -1,13 +1,11 @@
 package box
 
 import (
-	"encoding/json"
 	"fmt"
-	"log"
 
+	"github.com/go-redis/redis/v8"
 	"github.com/rs/xid"
 	"github.com/sonastea/chatterbox/internal/pkg/models"
-	"github.com/sonastea/chatterbox/lib/chatterbox/message"
 )
 
 var broker = &Client{
@@ -24,21 +22,32 @@ type Hub struct {
 	register   chan *Client
 	unregister chan *Client
 
-	users   []models.User
-	clients map[*Client]bool
-	rooms   map[*Room]bool
+	users     []models.User
+	clients   map[*Client]bool
+	rooms     map[*Room]bool
+	roomsLive map[string]*Room
+
+	pubsub *PubSub
 
 	roomStore models.RoomStore
 	userStore models.UserStore
 }
 
-func NewHub(roomStore models.RoomStore, userStore models.UserStore) *Hub {
+func NewHub(redisOpt *redis.Options, roomStore models.RoomStore, userStore models.UserStore) (*Hub, error) {
+	pubsub, err := newPubSub(redisOpt)
+	if err != nil {
+		return nil, err
+	}
+
 	hub := &Hub{
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
 
-		clients: make(map[*Client]bool),
-		rooms:   make(map[*Room]bool),
+		clients:   make(map[*Client]bool),
+		rooms:     make(map[*Room]bool),
+		roomsLive: make(map[string]*Room),
+
+		pubsub: pubsub,
 
 		roomStore: roomStore,
 		userStore: userStore,
@@ -46,11 +55,11 @@ func NewHub(roomStore models.RoomStore, userStore models.UserStore) *Hub {
 
 	hub.users = userStore.GetAllUsers()
 
-	return hub
+	return hub, nil
 }
 
 func (hub *Hub) Run() {
-	go hub.listenPubSubChannel()
+	go hub.listenPubSub()
 
 	for {
 		select {
@@ -65,7 +74,6 @@ func (hub *Hub) Run() {
 }
 
 func (hub *Hub) addClient(client *Client) {
-	hub.publishClientJoined(client)
 	hub.clients[client] = true
 	fmt.Println("Joined size of connection pool: ", len(hub.clients))
 }
@@ -74,7 +82,6 @@ func (hub *Hub) removeClient(client *Client) {
 	if _, ok := hub.clients[client]; ok {
 		delete(hub.clients, client)
 		hub.userStore.RemoveUser(client)
-		hub.publishClientLeft(client)
 		fmt.Println("Remaining size of connection pool: ", len(hub.clients))
 	}
 }
@@ -93,18 +100,20 @@ func (hub *Hub) createRoom(client *Client, name string, private bool) *Room {
 		Owner_Id:    client.GetXid(),
 		Private:     private,
 		clients:     make(map[*Client]bool),
+		hub:         hub,
 		register:    make(chan *Client),
 		unregister:  make(chan *Client),
-		broadcast:   make(chan *Message),
+		broadcast:   make(chan []byte),
 	}
 
 	hub.userStore.AddUser(client)
 	hub.roomStore.AddRoom(room, client.Xid)
 
-	go room.Run()
-	hub.rooms[room] = true
-
 	return room
+}
+
+func (hub *Hub) sendToRoom(XID string, msg string) {
+	hub.roomsLive[XID].broadcast <- []byte(msg)
 }
 
 func (hub *Hub) findClientById(ID string) *Client {
@@ -173,78 +182,17 @@ func (hub *Hub) runRoomFromStore(client *Client, name string) *Room {
 			Description: dbRoom.GetDescription(),
 			Owner_Id:    dbRoom.GetOwnerId(),
 			Private:     dbRoom.GetPrivate(),
+			hub:         hub,
 			clients:     make(map[*Client]bool),
 			register:    make(chan *Client),
 			unregister:  make(chan *Client),
-			broadcast:   make(chan *Message),
+			broadcast:   make(chan []byte),
 		}
-
-		go room.Run()
-		hub.rooms[room] = true
 	}
+
+	go room.Run()
+	hub.rooms[room] = true
+	hub.roomsLive[room.GetXid()] = room
 
 	return room
-}
-
-func (hub *Hub) publishClientJoined(client *Client) {
-	msg := &Message{
-		Type:   string(message.Server),
-		Action: string(message.JoinRoomMessage),
-		Body:   fmt.Sprintf("%v has joined. Say hi.", client.GetXid()),
-		Sender: broker,
-	}
-
-	if err := Redis.Publish(ctx, "general", msg.encode()).Err(); err != nil {
-		log.Println(err)
-	}
-}
-
-func (hub *Hub) publishClientLeft(client *Client) {
-	msg := &Message{
-		Type:   string(message.Server),
-		Action: string(message.LeaveRoomMessage),
-		Body:   fmt.Sprintf("%v left the room.", client.GetXid()),
-		Sender: broker,
-	}
-
-	if err := Redis.Publish(ctx, "general", msg.encode()).Err(); err != nil {
-		log.Println(err)
-	}
-}
-
-func (hub *Hub) listenPubSubChannel() {
-	pubsub := Redis.Subscribe(ctx, "general")
-
-	ch := pubsub.Channel()
-
-	for msg := range ch {
-		var m Message
-		if err := json.Unmarshal([]byte(msg.Payload), &m); err != nil {
-			log.Printf("Error on unmarshal JSON message %s", err)
-			return
-		}
-
-		switch m.Action {
-		case message.JoinRoom.String():
-			hub.handleUserJoined(m)
-		case message.LeaveRoom.String():
-			hub.handleUserLeft(m)
-		}
-	}
-}
-
-func (hub *Hub) handleUserJoined(msg Message) {
-	hub.users = append(hub.users, msg.Sender)
-	hub.broadcastToClients(msg.encode())
-}
-
-func (hub *Hub) handleUserLeft(msg Message) {
-	for i, user := range hub.users {
-		if user.GetId() == msg.Sender.GetId() {
-			hub.users[i] = hub.users[len(hub.users)-1]
-			hub.users = hub.users[:len(hub.users)-1]
-		}
-	}
-
-	hub.broadcastToClients(msg.encode())
 }

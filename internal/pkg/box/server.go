@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-redis/redis/v8"
 	"github.com/gorilla/websocket"
 	"github.com/rs/xid"
 	"github.com/sonastea/chatterbox/internal/pkg/models"
@@ -42,8 +43,12 @@ var (
 	}
 )
 
-func NewServer(cfg *Config, roomStore models.RoomStore, userStore models.UserStore) *Server {
-	hub := NewHub(roomStore, userStore)
+func NewServer(cfg *Config, redisOpt *redis.Options, roomStore models.RoomStore, userStore models.UserStore) *Server {
+	hub, err := NewHub(redisOpt, roomStore, userStore)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	go hub.Run()
 
 	router := http.NewServeMux()

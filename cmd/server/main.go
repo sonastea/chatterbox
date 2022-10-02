@@ -29,9 +29,8 @@ func main() {
 	}
 
 	db := database.NewConnPool()
-	box.InitRedisClient(cfg.RedisOpt)
 
-	server := box.NewServer(srvCfg, &store.RoomStore{DB: db}, &store.UserStore{DB: db})
+	server := box.NewServer(srvCfg, cfg.RedisOpt, &store.RoomStore{DB: db}, &store.UserStore{DB: db})
 
 	server.Start()
 }

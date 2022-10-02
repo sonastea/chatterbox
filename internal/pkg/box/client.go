@@ -161,11 +161,7 @@ func (client *Client) handleIncomingMessage(msg []byte) {
 func (client *Client) handleSendMessage(msg Message) {
 	msg.Action = message.SendMessage.String()
 	roomXid := msg.Room.GetXid()
-
-	if room := client.hub.findRoomByXid(roomXid); room != nil {
-		msg.Sender = client
-		room.broadcast <- &msg
-	}
+	client.hub.pubsub.conn.Publish(ctx, "room."+roomXid, msg.encode())
 }
 
 func (client *Client) handleJoinRoom(msg Message) {
@@ -174,14 +170,20 @@ func (client *Client) handleJoinRoom(msg Message) {
 	room := client.hub.findRoomByName(client, roomName)
 
 	if client.isInRoom(room) {
-		client.notifyRoomJoined(room, client)
+		client.notifyRoomClientJoined(room, client)
 		return
 	}
 
 	if !client.isInRoom(room) {
 		client.rooms[room] = true
 		room.register <- client
-		client.notifyRoomJoined(room, client)
+		client.notifyRoomClientJoined(room, client)
+	}
+
+	for prevRoom := range client.rooms {
+		if room != prevRoom {
+			prevRoom.unregister <- client
+		}
 	}
 }
 
@@ -206,7 +208,7 @@ func (client *Client) isInRoom(room *Room) bool {
 	return false
 }
 
-func (client *Client) notifyRoomJoined(room *Room, sender models.User) {
+func (client *Client) notifyRoomClientJoined(room *Room, sender models.User) {
 	msg := Message{
 		Type:   string(message.Server),
 		Action: string(message.NotifyJoinRoomMessage),
