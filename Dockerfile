@@ -5,7 +5,7 @@ FROM golang:1.19-alpine as builder
 RUN mkdir /opt/chatterbox
 WORKDIR /opt/chatterbox
 
-RUN apk add --no-cache git=2.36.2-r0 build-base=0.5-r3
+RUN apk add --no-cache git=2.40.1-r0 build-base=0.5-r3
 
 COPY go.mod .
 COPY go.sum .
