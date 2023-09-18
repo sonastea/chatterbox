@@ -44,8 +44,10 @@ func (hub *Hub) listenPubSub() {
 		select {
 		case msg := <-hub.pubsub.subscriptions["room.*"].Channel():
 			roomXid := strings.SplitN(msg.Channel, ".", 2)
-			if len(roomXid) < 2 {
+			room := strings.TrimSpace(roomXid[1])
+			if len(room) < 20 {
 				log.Printf("Missing room XID %v \n", msg.String())
+				break
 			}
 			hub.sendToRoom(roomXid[1], msg.Payload)
 		}
