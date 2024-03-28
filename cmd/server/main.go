@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
 
@@ -11,6 +12,7 @@ import (
 )
 
 func main() {
+    ctx := context.Background()
 	flag.Parse()
 
 	cfg, err := configs.NewConfig()
@@ -23,12 +25,12 @@ func main() {
 		return
 	}
 
-	err = database.InitDB()
+	err = database.InitDB(ctx)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	db := database.NewConnPool()
+	db := database.NewConnPool(ctx)
 
 	server := box.NewServer(srvCfg, cfg.RedisOpt, &store.RoomStore{DB: db}, &store.UserStore{DB: db})
 

@@ -3,19 +3,19 @@ CREATE SCHEMA IF NOT EXISTS chatterbox
 
 SET search_path TO chatterbox;
 
-CREATE TABLE "User" (
+CREATE TABLE IF NOT EXISTS "User" (
 	id int NOT NULL GENERATED ALWAYS AS IDENTITY,
     xid varchar NOT NULL,
 	"name" varchar NOT NULL,
 	email varchar NOT NULL,
 	"password" varchar NOT NULL,
+    CONSTRAINT user_pk PRIMARY KEY (id)
 	CONSTRAINT "User_Email_un" UNIQUE (email),
 	CONSTRAINT "User_xid_un" UNIQUE (xid),
-	CONSTRAINT user_pk PRIMARY KEY (id)
 );
 
 
-CREATE TABLE "Room" (
+CREATE TABLE IF NOT EXISTS "Room" (
 	id int NOT NULL GENERATED ALWAYS AS IDENTITY,
     xid varchar NOT NULL,
 	private boolean NOT NULL DEFAULT false,
@@ -23,14 +23,14 @@ CREATE TABLE "Room" (
 	description varchar NULL,
 	created_at date NULL DEFAULT now(),
 	owner_id varchar NOT NULL,
+    CONSTRAINT "Room_pk" PRIMARY KEY (id),
 	CONSTRAINT "Room_Name_un" UNIQUE (name),
-	CONSTRAINT "Room_pk" PRIMARY KEY (id),
-	CONSTRAINT "ROom_xid_un" UNIQUE (xid),
+	CONSTRAINT "Room_xid_un" UNIQUE (xid),
 	CONSTRAINT "Room_Owner_FK" FOREIGN KEY (owner_id) REFERENCES chatterbox."User"(xid)
 );
 
 
-CREATE TABLE "Message" (
+CREATE TABLE IF NOT EXISTS "Message" (
 	id int NOT NULL GENERATED ALWAYS AS IDENTITY,
 	body varchar NULL,
 	room_id varchar NOT NULL,

@@ -10,14 +10,14 @@ import (
 	"github.com/jackc/pgx/v4/pgxpool"
 )
 
-func InitDB() error {
+func InitDB(ctx context.Context) error {
 	log.Printf("Connect to database\n")
-	db, err := pgx.Connect(context.Background(), os.Getenv("DATABASE_URL"))
+	db, err := pgx.Connect(ctx, os.Getenv("DATABASE_URL"))
 	if err != nil {
 		return err
 	}
 
-	db.Exec(context.Background(),
+	db.Exec(ctx,
 		`CREATE DATABASE Chatterbox
             WITH
             OWNER = postgres
@@ -35,14 +35,14 @@ func InitDB() error {
 	sql := string(s)
 
 	log.Printf("Run sql script\n")
-	db.Exec(context.Background(), sql)
+	db.Exec(ctx, sql)
 
 	log.Printf("Close sql connection\n")
 	return nil
 }
 
-func NewConnPool() *pgxpool.Pool {
-	pool, err := pgxpool.Connect(context.Background(), os.Getenv("DATABASE_URL"))
+func NewConnPool(ctx context.Context) *pgxpool.Pool {
+	pool, err := pgxpool.Connect(ctx, os.Getenv("DATABASE_URL"))
 	if err != nil {
 		panic("Unable to connect to database")
 	}
