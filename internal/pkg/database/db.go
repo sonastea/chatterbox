@@ -2,7 +2,6 @@ package database
 
 import (
 	"context"
-	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -29,7 +28,7 @@ func InitDB() error {
 	log.Printf("Read sql file\n")
 	path := filepath.Join("./sql/script.sql")
 
-	s, err := ioutil.ReadFile(path)
+	s, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
