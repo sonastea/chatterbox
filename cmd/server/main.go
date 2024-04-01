@@ -12,27 +12,31 @@ import (
 )
 
 func main() {
-    ctx := context.Background()
+	ctx := context.Background()
 	flag.Parse()
 
 	cfg, err := configs.NewConfig()
 	if err != nil {
-		return
+		log.Fatalf("[NewConfig]: %v\n", err)
 	}
 
 	srvCfg, err := cfg.HTTP()
 	if err != nil {
-		return
+		log.Fatalf("[ServerConfig] %v\n", err)
 	}
 
 	err = database.InitDB(ctx)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("[InitDB] %v\n", err)
 	}
 
-	db := database.NewConnPool(ctx)
+	pool := database.NewConnPool(ctx)
 
-	server := box.NewServer(srvCfg, cfg.RedisOpt, &store.RoomStore{DB: db}, &store.UserStore{DB: db})
+	server := box.NewServer(srvCfg, cfg.RedisOpt, &store.RoomStore{DB: pool}, &store.UserStore{DB: pool})
 
-	server.Start()
+	defer func() {
+		pool.Close()
+	}()
+
+	server.Start(ctx)
 }

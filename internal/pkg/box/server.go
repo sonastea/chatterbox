@@ -94,9 +94,7 @@ func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	go client.readPump()
 }
 
-func (s *Server) Start() {
-	_, cancel := context.WithCancel(context.Background())
-
+func (s *Server) Start(ctx context.Context) {
 	fmt.Printf("Listening on %s\n", s.server.Addr)
 	go func() {
 		if err := s.server.ListenAndServeTLS(tlsCert, tlsKey); err != http.ErrServerClosed {
@@ -112,7 +110,7 @@ func (s *Server) Start() {
 		<-cleanup
 	}()
 
-	cleansedCtx, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+	cleansedCtx, cancelShutdown := context.WithTimeout(ctx, 5*time.Second)
 	defer cancelShutdown()
 
 	if err := s.server.Shutdown(cleansedCtx); err != nil {
@@ -120,6 +118,4 @@ func (s *Server) Start() {
 	} else {
 		log.Printf("Shutdown successful\n")
 	}
-
-	cancel()
 }

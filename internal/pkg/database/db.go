@@ -5,25 +5,34 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
-	"github.com/jackc/pgx/v4"
-	"github.com/jackc/pgx/v4/pgxpool"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func InitDB(ctx context.Context) error {
-	log.Printf("Connect to database\n")
-	db, err := pgx.Connect(ctx, os.Getenv("DATABASE_URL"))
+	log.Printf("Connect to database for migrations\n")
+	db, err := pgxpool.New(ctx, os.Getenv("DATABASE_URL"))
 	if err != nil {
+		log.Printf("[Connect] %v\n", err.Error())
 		return err
 	}
+	defer db.Close()
 
-	db.Exec(ctx,
+	_, err = db.Exec(ctx,
 		`CREATE DATABASE Chatterbox
             WITH
             OWNER = postgres
             ENCODING = 'UTF8'
             CONNECTION LIMIT = -1
             IS_TEMPLATE = False;`)
+	if err != nil {
+		if strings.Contains(err.Error(), "42P04") {
+			log.Println("Database Chatterbox already exists.")
+		} else {
+			return err
+		}
+	}
 
 	log.Printf("Read sql file\n")
 	path := filepath.Join("./sql/script.sql")
@@ -35,14 +44,18 @@ func InitDB(ctx context.Context) error {
 	sql := string(s)
 
 	log.Printf("Run sql script\n")
-	db.Exec(ctx, sql)
+    _, err = db.Exec(ctx, sql)
+	if err != nil {
+		return err
+	}
 
-	log.Printf("Close sql connection\n")
+	log.Printf("Close migrations sql connection\n")
+
 	return nil
 }
 
 func NewConnPool(ctx context.Context) *pgxpool.Pool {
-	pool, err := pgxpool.Connect(ctx, os.Getenv("DATABASE_URL"))
+	pool, err := pgxpool.New(ctx, os.Getenv("DATABASE_URL"))
 	if err != nil {
 		panic("Unable to connect to database")
 	}
