@@ -5,7 +5,7 @@ import (
 	"log"
 	"strings"
 
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 )
 
 type Realm string
@@ -20,6 +20,11 @@ var ctx = context.Background()
 
 func newPubSub(opt *redis.Options) (*PubSub, error) {
 	conn := redis.NewClient(opt)
+
+    val, err := conn.Ping(ctx).Result()
+    if val != "PONG" && err != nil {
+        log.Fatalf("[PING]: Unable to establish connection to redis!")
+    }
 
 	subs := []Realm{
 		"room.*",
