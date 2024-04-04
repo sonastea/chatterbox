@@ -41,75 +41,71 @@ func (user *User) GetPassword() string {
 	return user.Password
 }
 
-func (us *UserStore) AddUser(client models.User) models.User {
-	stmt, err := us.DB.Query(
-		context.Background(),
-		`INSERT INTO chatterbox."User"(xid, name, email, password) VALUES($1, $2, $3, $4)`,
-		client.GetXid(), client.GetName(), client.GetName()+"@example.com", client.GetPassword(),
-	)
-	if err != nil {
-		log.Println(err)
-	}
-	defer stmt.Close()
+func (us *UserStore) AddUser(client models.User) (models.User, error) {
+	query :=
+		`INSERT INTO chatterbox."User"(xid, name, email, password) VALUES($1, $2, $3, $4)
+            RETURNING xid, name, email`
 
 	var user User
-	if stmt.Next() {
-		if err := stmt.Scan(&user.Xid, &user.Name, &user.Email); err != nil {
-			log.Println(err)
-		}
+	err := us.DB.QueryRow(
+		context.Background(),
+		query,
+		client.GetXid(), client.GetName(), client.GetName()+"@example.com", client.GetPassword()).
+		Scan(&user.Xid, &user.Name, &user.Email)
+
+	if err != nil {
+		log.Printf("Error adding user: %v\n", err)
+		return nil, err
 	}
 
-	return &user
+	return &user, err
 }
 
-func (us *UserStore) RemoveUser(client models.User) {
-	stmt, err := us.DB.Query(
-		context.Background(),
-		`DELETE from chatterbox."User" WHERE name = $1`,
-		client.GetName(),
-	)
+func (us *UserStore) RemoveUser(client models.User) error {
+	query := `DELETE from chatterbox."User" WHERE name = $1`
+
+	_, err := us.DB.Exec(context.Background(), query, client.GetName())
 	if err != nil {
-		log.Println(err)
+		log.Printf("Error removing user: %v\n", err)
+		return fmt.Errorf("Error removing user: %w\n", err)
 	}
 
-	defer stmt.Close()
+	return nil
 }
 
-func (us *UserStore) FindUserByXid(xid string) models.User {
-	row, err := us.DB.Query(
-		context.Background(),
-		`SELECT xid, name, email from chatterbox."User" WHERE xid = $1 LIMIT 1;`,
-		xid,
-	)
-	if err != nil {
-		log.Println(err)
-	}
-	defer row.Close()
+func (us *UserStore) FindUserByXid(xid string) (models.User, error) {
+	query := `SELECT xid, name, email from chatterbox."User" WHERE xid = $1 LIMIT 1`
 
 	var user User
-	if row.Next() {
-		if err := row.Scan(&user.Xid, &user.Name, &user.Email); err != nil {
-			log.Println(err)
-		}
+	err := us.DB.QueryRow(context.Background(), query, xid).Scan(&user.Xid, &user.Name, &user.Email)
+	if err != nil {
+		log.Printf("Error finding user by xid: %v\n", err)
+		return nil, fmt.Errorf("Error finding user by xid: %w\n", err)
 	}
-	fmt.Printf("%+v", user)
 
-	return &user
+	return &user, nil
 }
 
-func (us *UserStore) GetAllUsers() []models.User {
-	rows, err := us.DB.Query(context.Background(), `SELECT xid, name, email FROM chatterbox."User"`)
+func (us *UserStore) GetAllUsers() ([]models.User, error) {
+	query := `SELECT xid, name, email FROM chatterbox."User"`
+
+	rows, err := us.DB.Query(context.Background(), query)
 	if err != nil {
-		log.Println(err)
+		log.Printf("Error getting all users: %v\n", err)
+		return nil, fmt.Errorf("Error getting all users: %w\n", err)
 	}
 	defer rows.Close()
 
 	var users []models.User
 	for rows.Next() {
 		var user User
-		rows.Scan(&user.Xid, &user.Name, &user.Email)
+		if err := rows.Scan(&user.Xid, &user.Name, &user.Email); err != nil {
+			log.Printf("Error scanning user row: %v\n", err)
+			return nil, fmt.Errorf("Error scanning user row: %w\n", err)
+
+		}
 		users = append(users, &user)
 	}
 
-	return users
+	return users, nil
 }

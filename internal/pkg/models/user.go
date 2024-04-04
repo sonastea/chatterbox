@@ -9,8 +9,8 @@ type User interface {
 }
 
 type UserStore interface {
-	AddUser(user User) User
-	RemoveUser(user User)
-	FindUserByXid(xid string) User
-	GetAllUsers() []User
+	AddUser(user User) (User, error)
+	RemoveUser(user User) error
+	FindUserByXid(xid string) (User, error)
+	GetAllUsers() ([]User, error)
 }

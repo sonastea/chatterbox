@@ -53,7 +53,10 @@ func NewHub(redisOpt *redis.Options, roomStore models.RoomStore, userStore model
 		userStore: userStore,
 	}
 
-	hub.users = userStore.GetAllUsers()
+	hub.users, err = userStore.GetAllUsers()
+	if err != nil {
+		return nil, err
+	}
 
 	return hub, nil
 }
