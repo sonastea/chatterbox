@@ -95,10 +95,10 @@ func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) Start(ctx context.Context) {
-	fmt.Printf("Listening on %s\n", s.server.Addr)
+	fmt.Printf("chatterbox is now listening on %s\n", s.server.Addr)
 	go func() {
 		if err := s.server.ListenAndServeTLS(tlsCert, tlsKey); err != http.ErrServerClosed {
-			log.Fatalf("HTTPS server ListenAndServe: %v", err)
+            log.Fatalf("Fatal error: chatterbox server ListenAndServe: %v\n", err)
 		}
 	}()
 
