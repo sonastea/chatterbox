@@ -6,8 +6,22 @@ import (
 	"log"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/sonastea/chatterbox/internal/pkg/models"
 )
+
+type room interface {
+	GetId() int
+	GetXid() string
+	GetPrivate() bool
+	GetName() string
+	GetDescription() string
+	GetOwnerId() string
+}
+
+type roomStore interface {
+	AddRoom(room Room, owner_id string) error
+	FindRoomByName(name string) Room
+	FindRoomByXid(xid string) Room
+}
 
 type RoomStore struct {
 	DB *pgxpool.Pool
@@ -46,7 +60,7 @@ func (room *Room) GetOwnerId() string {
 	return room.Owner_ID
 }
 
-func (rs *RoomStore) AddRoom(room models.Room, owner_id string) error {
+func (rs *RoomStore) AddRoom(room room, owner_id string) error {
 	query := `INSERT INTO chatterbox."Room"(xid, name, description, owner_id) VALUES($1, $2, $3, $4)`
 
 	stmt, err := rs.DB.Query(
@@ -63,7 +77,7 @@ func (rs *RoomStore) AddRoom(room models.Room, owner_id string) error {
 	return nil
 }
 
-func (rs *RoomStore) FindRoomByName(name string) models.Room {
+func (rs *RoomStore) FindRoomByName(name string) room {
 	stmt, err := rs.DB.Query(
 		context.Background(),
 		`SELECT xid, private, name, description, owner_id from chatterbox."Room" WHERE name = $1 LIMIT 1;`,
@@ -87,7 +101,7 @@ func (rs *RoomStore) FindRoomByName(name string) models.Room {
 	return &room
 }
 
-func (rs *RoomStore) FindRoomByXid(xid string) models.Room {
+func (rs *RoomStore) FindRoomByXid(xid string) room {
 	stmt, err := rs.DB.Query(context.Background(), `SELECT from chatterbox."Room" WHERE xid = $1`, xid)
 	if err != nil {
 		log.Println(err)

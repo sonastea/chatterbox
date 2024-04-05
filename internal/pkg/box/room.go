@@ -3,15 +3,12 @@ package box
 import (
 	"fmt"
 
+	"github.com/sonastea/chatterbox/internal/pkg/store"
 	"github.com/sonastea/chatterbox/lib/chatterbox/message"
 )
 
 type Room struct {
-	Id          int    `json:"id,omitempty"`
-	Xid         string `json:"xid"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Owner_Id    string `json:"owner_id,omitempty"`
+    store.Room
 
 	Private bool `json:"private"`
 	clients map[*Client]bool
@@ -25,7 +22,7 @@ type Room struct {
 }
 
 func (room *Room) GetId() int {
-	return room.Id
+	return room.ID
 }
 
 func (room *Room) GetXid() string {
@@ -45,7 +42,7 @@ func (room *Room) GetDescription() string {
 }
 
 func (room *Room) GetOwnerId() string {
-	return room.Owner_Id
+	return room.Owner_ID
 }
 
 func (room *Room) Run() {

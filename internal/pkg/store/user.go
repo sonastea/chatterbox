@@ -6,8 +6,22 @@ import (
 	"log"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/sonastea/chatterbox/internal/pkg/models"
 )
+
+type user interface {
+	GetId() int
+	GetXid() string
+	GetName() string
+	GetEmail() string
+	GetPassword() string
+}
+
+type userStore interface {
+	AddUser(user User) (*User, error)
+	RemoveUser(user User) error
+	FindUserByXid(xid string) (*User, error)
+	GetAllUsers() ([]User, error)
+}
 
 type UserStore struct {
 	DB *pgxpool.Pool
@@ -41,7 +55,7 @@ func (user *User) GetPassword() string {
 	return user.Password
 }
 
-func (us *UserStore) AddUser(client models.User) (models.User, error) {
+func (us *UserStore) AddUser(client user) (*User, error) {
 	query :=
 		`INSERT INTO chatterbox."User"(xid, name, email, password) VALUES($1, $2, $3, $4)
             RETURNING xid, name, email`
@@ -61,7 +75,7 @@ func (us *UserStore) AddUser(client models.User) (models.User, error) {
 	return &user, err
 }
 
-func (us *UserStore) RemoveUser(client models.User) error {
+func (us *UserStore) RemoveUser(client user) error {
 	query := `DELETE from chatterbox."User" WHERE name = $1`
 
 	_, err := us.DB.Exec(context.Background(), query, client.GetName())
@@ -73,7 +87,7 @@ func (us *UserStore) RemoveUser(client models.User) error {
 	return nil
 }
 
-func (us *UserStore) FindUserByXid(xid string) (models.User, error) {
+func (us *UserStore) FindUserByXid(xid string) (*User, error) {
 	query := `SELECT xid, name, email from chatterbox."User" WHERE xid = $1 LIMIT 1`
 
 	var user User
@@ -86,7 +100,7 @@ func (us *UserStore) FindUserByXid(xid string) (models.User, error) {
 	return &user, nil
 }
 
-func (us *UserStore) GetAllUsers() ([]models.User, error) {
+func (us *UserStore) GetAllUsers() ([]User, error) {
 	query := `SELECT xid, name, email FROM chatterbox."User"`
 
 	rows, err := us.DB.Query(context.Background(), query)
@@ -96,7 +110,7 @@ func (us *UserStore) GetAllUsers() ([]models.User, error) {
 	}
 	defer rows.Close()
 
-	var users []models.User
+	var users []User
 	for rows.Next() {
 		var user User
 		if err := rows.Scan(&user.Xid, &user.Name, &user.Email); err != nil {
@@ -104,7 +118,7 @@ func (us *UserStore) GetAllUsers() ([]models.User, error) {
 			return nil, fmt.Errorf("Error scanning user row: %w\n", err)
 
 		}
-		users = append(users, &user)
+		users = append(users, user)
 	}
 
 	return users, nil
