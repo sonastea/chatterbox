@@ -2,18 +2,18 @@ package message
 
 type messageType string
 
+var messageTypeToString = map[messageType]string{
+    Normal:    "normal",
+    Broadcast: "broadcast",
+    Command:   "command",
+    Server:    "server",
+}
+
 func (m messageType) String() string {
-	switch m {
-	case Normal:
-		return "normal"
-	case Broadcast:
-		return "broadcast"
-	case Command:
-		return "command"
-	case Server:
-		return "server"
-	}
-	return "Unknown MessageType"
+    if str, ok := messageTypeToString[m]; ok {
+        return str
+    }
+    return "Unknown MessageType"
 }
 
 const (
