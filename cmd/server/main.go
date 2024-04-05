@@ -31,12 +31,9 @@ func main() {
 	}
 
 	pool := database.NewConnPool(ctx)
+    defer pool.Close()
 
 	server := box.NewServer(srvCfg, cfg.RedisOpt, &store.RoomStore{DB: pool}, &store.UserStore{DB: pool})
-
-	defer func() {
-		pool.Close()
-	}()
 
 	server.Start(ctx)
 }

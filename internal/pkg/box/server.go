@@ -104,16 +104,14 @@ func (s *Server) Start(ctx context.Context) {
 		}
 	}()
 
-	cleanup := make(chan os.Signal, 1)
-	signal.Notify(cleanup, os.Interrupt, syscall.SIGINT)
-	<-cleanup
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGINT)
 
-	go func() {
-		<-cleanup
-	}()
+    recvSig := <-stop
+    log.Printf("[WARN] received signal: %v", recvSig)
 
-	cleansedCtx, cancelShutdown := context.WithTimeout(ctx, 5*time.Second)
-	defer cancelShutdown()
+	cleansedCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 
 	if err := s.server.Shutdown(cleansedCtx); err != nil {
 		log.Printf("Shutdown error: %v\n", err)
