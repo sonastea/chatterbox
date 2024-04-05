@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/sonastea/chatterbox/internal/pkg/models"
+	"github.com/sonastea/chatterbox/internal/pkg/store"
 	"github.com/sonastea/chatterbox/lib/chatterbox/message"
 )
 
@@ -30,12 +30,8 @@ const (
 
 type Client struct {
 	sync.RWMutex
-	Id       int    `json:"id,string,omitempty"`
-	Xid      string `json:"xid"`
-	Name     string `json:"name,omitempty"`
-	Email    string `json:"email,omitempty"`
-	Password string `json:"password,omitempty"`
-	conn     *websocket.Conn
+	store.User
+	conn *websocket.Conn
 
 	hub   *Hub
 	rooms map[*Room]bool
@@ -167,7 +163,7 @@ func (client *Client) handleSendMessage(msg Message) {
 func (client *Client) handleJoinRoom(msg Message) {
 	roomName := msg.Room.GetName()
 
-	room := client.hub.findRoomByName(client, roomName)
+	room := client.hub.findRoomByName(&client.User, roomName)
 
 	if client.isInRoom(room) {
 		client.notifyRoomClientJoined(room, client)
@@ -208,12 +204,12 @@ func (client *Client) isInRoom(room *Room) bool {
 	return false
 }
 
-func (client *Client) notifyRoomClientJoined(room *Room, sender models.User) {
+func (client *Client) notifyRoomClientJoined(room *Room, sender *Client) {
 	msg := Message{
 		Type:   string(message.Server),
 		Action: string(message.NotifyJoinRoomMessage),
 		Room:   room,
-		Body:   fmt.Sprintf("%v joined %v.", sender.GetXid(), room.GetName()),
+		Body:   fmt.Sprintf("%v joined %v.", sender.Xid, room.GetName()),
 		Sender: broker,
 	}
 

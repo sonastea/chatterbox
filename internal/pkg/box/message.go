@@ -3,16 +3,14 @@ package box
 import (
 	"encoding/json"
 	"log"
-
-	"github.com/sonastea/chatterbox/internal/pkg/models"
 )
 
 type Message struct {
-	Type   string      `json:"type"`
-	Action string      `json:"action"`
-	Room   *Room       `json:"room"`
-	Body   string      `json:"body"`
-	Sender models.User `json:"sender"`
+	Type   string  `json:"type"`
+	Action string  `json:"action"`
+	Room   *Room   `json:"room"`
+	Body   string  `json:"body"`
+	Sender *Client `json:"sender"`
 }
 
 func (message *Message) encode() []byte {

@@ -28,7 +28,7 @@ func InitDB(ctx context.Context) error {
             IS_TEMPLATE = False;`)
 	if err != nil {
 		if strings.Contains(err.Error(), "42P04") {
-			log.Println("Database Chatterbox already exists.")
+			log.Println("Database Chatterbox already exists")
 		} else {
 			return err
 		}

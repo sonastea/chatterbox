@@ -5,13 +5,15 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/xid"
-	"github.com/sonastea/chatterbox/internal/pkg/models"
+	"github.com/sonastea/chatterbox/internal/pkg/store"
 )
 
 var broker = &Client{
-	Id:    0,
-	Xid:   xid.NilID().String(),
-	Name:  "SERVER",
+	User: store.User{
+		Id:   0,
+		Xid:  xid.NilID().String(),
+		Name: "SERVER",
+	},
 	conn:  nil,
 	hub:   nil,
 	rooms: nil,
@@ -22,18 +24,18 @@ type Hub struct {
 	register   chan *Client
 	unregister chan *Client
 
-	users     []models.User
+	users     []store.User
 	clients   map[*Client]bool
 	rooms     map[*Room]bool
 	roomsLive map[string]*Room
 
 	pubsub *PubSub
 
-	roomStore models.RoomStore
-	userStore models.UserStore
+	roomStore *store.RoomStore
+	userStore *store.UserStore
 }
 
-func NewHub(redisOpt *redis.Options, roomStore models.RoomStore, userStore models.UserStore) (*Hub, error) {
+func NewHub(redisOpt *redis.Options, roomStore *store.RoomStore, userStore *store.UserStore) (*Hub, error) {
 	pubsub, err := newPubSub(redisOpt)
 	if err != nil {
 		return nil, err
@@ -53,7 +55,10 @@ func NewHub(redisOpt *redis.Options, roomStore models.RoomStore, userStore model
 		userStore: userStore,
 	}
 
-	hub.users = userStore.GetAllUsers()
+	hub.users, err = userStore.GetAllUsers()
+	if err != nil {
+		return nil, err
+	}
 
 	return hub, nil
 }
@@ -92,18 +97,20 @@ func (hub *Hub) broadcastToClients(message []byte) {
 	}
 }
 
-func (hub *Hub) createRoom(client *Client, name string, private bool) *Room {
+func (hub *Hub) createRoom(client *store.User, name string, private bool) *Room {
 	room := &Room{
-		Xid:         xid.New().String(),
-		Name:        name,
-		Description: "",
-		Owner_Id:    client.GetXid(),
-		Private:     private,
-		clients:     make(map[*Client]bool),
-		hub:         hub,
-		register:    make(chan *Client),
-		unregister:  make(chan *Client),
-		broadcast:   make(chan []byte),
+		Room: store.Room{
+			Xid:         xid.New().String(),
+			Name:        name,
+			Description: "",
+			Owner_ID:    client.Xid,
+		},
+		Private:    private,
+		clients:    make(map[*Client]bool),
+		hub:        hub,
+		register:   make(chan *Client),
+		unregister: make(chan *Client),
+		broadcast:  make(chan []byte),
 	}
 
 	hub.userStore.AddUser(client)
@@ -128,8 +135,8 @@ func (hub *Hub) findClientById(ID string) *Client {
 	return foundClient
 }
 
-func (hub *Hub) findUserById(ID string) models.User {
-	var foundUser models.User
+func (hub *Hub) findUserById(ID string) store.User {
+	var foundUser store.User
 	for _, user := range hub.users {
 		if user.GetXid() == ID {
 			foundUser = user
@@ -140,7 +147,7 @@ func (hub *Hub) findUserById(ID string) models.User {
 	return foundUser
 }
 
-func (hub *Hub) findRoomByName(client *Client, name string) *Room {
+func (hub *Hub) findRoomByName(client *store.User, name string) *Room {
 	var foundRoom *Room
 	for room := range hub.rooms {
 		if room.GetName() == name {
@@ -168,7 +175,7 @@ func (hub *Hub) findRoomByXid(xid string) *Room {
 	return foundRoom
 }
 
-func (hub *Hub) runRoomFromStore(client *Client, name string) *Room {
+func (hub *Hub) runRoomFromStore(client *store.User, name string) *Room {
 	var room *Room
 	dbRoom := hub.roomStore.FindRoomByName(name)
 	// create room if it doesn't exist in roomStore
@@ -177,16 +184,18 @@ func (hub *Hub) runRoomFromStore(client *Client, name string) *Room {
 	} else {
 		// room exists, create room struct, run it, and add to rooms map
 		room = &Room{
-			Xid:         dbRoom.GetXid(),
-			Name:        dbRoom.GetName(),
-			Description: dbRoom.GetDescription(),
-			Owner_Id:    dbRoom.GetOwnerId(),
-			Private:     dbRoom.GetPrivate(),
-			hub:         hub,
-			clients:     make(map[*Client]bool),
-			register:    make(chan *Client),
-			unregister:  make(chan *Client),
-			broadcast:   make(chan []byte),
+			Room: store.Room{
+				Xid:         dbRoom.GetXid(),
+				Name:        dbRoom.GetName(),
+				Description: dbRoom.GetDescription(),
+				Owner_ID:    dbRoom.GetOwnerId(),
+				Private:     dbRoom.GetPrivate(),
+			},
+			hub:        hub,
+			clients:    make(map[*Client]bool),
+			register:   make(chan *Client),
+			unregister: make(chan *Client),
+			broadcast:  make(chan []byte),
 		}
 	}
 

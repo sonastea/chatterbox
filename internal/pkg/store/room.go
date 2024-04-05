@@ -2,27 +2,42 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"log"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/sonastea/chatterbox/internal/pkg/models"
 )
+
+type room interface {
+	GetId() int
+	GetXid() string
+	GetPrivate() bool
+	GetName() string
+	GetDescription() string
+	GetOwnerId() string
+}
+
+type roomStore interface {
+	AddRoom(room Room, owner_id string) error
+	FindRoomByName(name string) Room
+	FindRoomByXid(xid string) Room
+}
 
 type RoomStore struct {
 	DB *pgxpool.Pool
 }
 
 type Room struct {
-	Id          int    `json:"id,omitempty"`
+	ID          int    `json:"id,omitempty"`
 	Xid         string `json:"xid"`
 	Private     bool   `json:"private"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
-	Owner_Id    string `json:"owner_id"`
+	Owner_ID    string `json:"owner_id"`
 }
 
 func (room *Room) GetId() int {
-	return room.Id
+	return room.ID
 }
 
 func (room *Room) GetXid() string {
@@ -42,22 +57,27 @@ func (room *Room) GetDescription() string {
 }
 
 func (room *Room) GetOwnerId() string {
-	return room.Owner_Id
+	return room.Owner_ID
 }
 
-func (rs *RoomStore) AddRoom(room models.Room, owner_id string) {
+func (rs *RoomStore) AddRoom(room room, owner_id string) error {
+	query := `INSERT INTO chatterbox."Room"(xid, name, description, owner_id) VALUES($1, $2, $3, $4)`
+
 	stmt, err := rs.DB.Query(
 		context.Background(),
-		`INSERT INTO chatterbox."Room"(xid, name, description, owner_id) VALUES($1, $2, $3, $4)`,
+		query,
 		room.GetXid(), room.GetName(), room.GetDescription(), owner_id,
 	)
 	if err != nil {
-		log.Println(err)
+		log.Printf("Error adding room %v\n", err)
+		return fmt.Errorf("Error adding room %w\n", err)
 	}
 	defer stmt.Close()
+
+	return nil
 }
 
-func (rs *RoomStore) FindRoomByName(name string) models.Room {
+func (rs *RoomStore) FindRoomByName(name string) room {
 	stmt, err := rs.DB.Query(
 		context.Background(),
 		`SELECT xid, private, name, description, owner_id from chatterbox."Room" WHERE name = $1 LIMIT 1;`,
@@ -74,14 +94,14 @@ func (rs *RoomStore) FindRoomByName(name string) models.Room {
 		return nil
 	}
 
-	if err := stmt.Scan(&room.Xid, &room.Private, &room.Name, &room.Description, &room.Owner_Id); err != nil {
+    if err := stmt.Scan(&room.Xid, &room.Private, &room.Name, &room.Description, &room.Owner_ID); err != nil {
 		log.Println(err)
 	}
 
 	return &room
 }
 
-func (rs *RoomStore) FindRoomByXid(xid string) models.Room {
+func (rs *RoomStore) FindRoomByXid(xid string) room {
 	stmt, err := rs.DB.Query(context.Background(), `SELECT from chatterbox."Room" WHERE xid = $1`, xid)
 	if err != nil {
 		log.Println(err)

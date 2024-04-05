@@ -13,7 +13,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/xid"
-	"github.com/sonastea/chatterbox/internal/pkg/models"
+	"github.com/sonastea/chatterbox/internal/pkg/store"
 )
 
 type Config struct {
@@ -43,7 +43,7 @@ var (
 	}
 )
 
-func NewServer(cfg *Config, redisOpt *redis.Options, roomStore models.RoomStore, userStore models.UserStore) *Server {
+func NewServer(cfg *Config, redisOpt *redis.Options, roomStore *store.RoomStore, userStore *store.UserStore) *Server {
 	hub, err := NewHub(redisOpt, roomStore, userStore)
 	if err != nil {
 		log.Fatal(err)
@@ -78,14 +78,16 @@ func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	newId := xid.New().String()
 
 	client := &Client{
-		Xid:      newId,
-		Name:     newId,
-		Email:    newId + "example.com",
-		Password: "",
-		hub:      hub,
-		conn:     conn,
-		rooms:    make(map[*Room]bool),
-		send:     make(chan []byte),
+		User: store.User{
+			Xid:      newId,
+			Name:     newId,
+			Email:    newId + "example.com",
+			Password: "",
+		},
+		hub:   hub,
+		conn:  conn,
+		rooms: make(map[*Room]bool),
+		send:  make(chan []byte),
 	}
 
 	client.hub.register <- client
@@ -95,23 +97,21 @@ func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) Start(ctx context.Context) {
-	fmt.Printf("Listening on %s\n", s.server.Addr)
+	fmt.Printf("chatterbox is now listening on %s\n", s.server.Addr)
 	go func() {
 		if err := s.server.ListenAndServeTLS(tlsCert, tlsKey); err != http.ErrServerClosed {
-			log.Fatalf("HTTPS server ListenAndServe: %v", err)
+			log.Fatalf("Fatal error: chatterbox server ListenAndServe: %v\n", err)
 		}
 	}()
 
-	cleanup := make(chan os.Signal, 1)
-	signal.Notify(cleanup, os.Interrupt, syscall.SIGINT)
-	<-cleanup
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGINT)
 
-	go func() {
-		<-cleanup
-	}()
+    recvSig := <-stop
+    log.Printf("[WARN] received signal: %v", recvSig)
 
-	cleansedCtx, cancelShutdown := context.WithTimeout(ctx, 5*time.Second)
-	defer cancelShutdown()
+	cleansedCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 
 	if err := s.server.Shutdown(cleansedCtx); err != nil {
 		log.Printf("Shutdown error: %v\n", err)

@@ -2,22 +2,20 @@ package message
 
 type messageAction string
 
+var messageActionToString = map[messageAction]string{
+	NotifyJoinRoomMessage: "notify-join-room-message",
+	JoinRoomMessage:       "join-room-message",
+	LeaveRoomMessage:      "leave-room-message",
+	SendMessage:           "send-message",
+	JoinRoom:              "join-room",
+	LeaveRoom:             "leave-room",
+}
+
 func (a messageAction) String() string {
-	switch a {
-	case NotifyJoinRoomMessage:
-		return "notify-join-room-message"
-	case JoinRoomMessage:
-		return "join-room-message"
-	case LeaveRoomMessage:
-		return "leave-room-message"
-	case SendMessage:
-		return "send-message"
-	case JoinRoom:
-		return "join-room"
-	case LeaveRoom:
-		return "leave-room"
+	if str, ok := messageActionToString[a]; ok {
+		return str
 	}
-	return "Unknown Action"
+	return "Unknown MessageAction"
 }
 
 const (
