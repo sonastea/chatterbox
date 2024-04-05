@@ -10,7 +10,7 @@ type Room interface {
 }
 
 type RoomStore interface {
-	AddRoom(room Room, owner_id string)
+	AddRoom(room Room, owner_id string) error
 	FindRoomByName(name string) Room
 	FindRoomByXid(xid string) Room
 }
