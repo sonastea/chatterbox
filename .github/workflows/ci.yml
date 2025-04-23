@@ -45,7 +45,7 @@ jobs:
           key: ${{ secrets.AWS_PRIVATE_KEY }}
           envs: database_url
           script: |
-            cd /home/deploy/chatterbox
+            cd /home/shipper/chatterbox
             docker pull sonastea/chatterbox:latest
             docker stop chatterbox
             docker rm -f chatterbox
