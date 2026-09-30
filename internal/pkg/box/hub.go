@@ -1,207 +1,214 @@
 package box
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
+	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/rs/xid"
+	"github.com/sonastea/chatterbox/internal/pkg/broker"
 	"github.com/sonastea/chatterbox/internal/pkg/store"
+	"github.com/sonastea/chatterbox/lib/chatterbox/message"
 )
 
-var broker = &Client{
-	User: store.User{
-		Id:   0,
-		Xid:  xid.NilID().String(),
-		Name: "SERVER",
-	},
-	conn:  nil,
-	hub:   nil,
-	rooms: nil,
-	send:  nil,
+var serverSender = &Client{
+	User: store.User{Xid: xid.NilID().String(), Name: "SERVER"},
 }
 
 type Hub struct {
 	register   chan *Client
 	unregister chan *Client
+	commands   chan clientCommand
 
-	users     []store.User
-	clients   map[*Client]bool
-	rooms     map[*Room]bool
-	roomsLive map[string]*Room
+	// All client and room state is owned by the hub event loop.
+	clients map[*Client]bool
+	rooms   map[string]*Room
 
-	pubsub *PubSub
+	bus          broker.Broker
+	subscription broker.Subscription
+	ctx          context.Context
+	cancel       context.CancelFunc
+	done         chan struct{}
 
-	roomStore *store.RoomStore
-	userStore *store.UserStore
+	roomStore store.RoomRepository
+	userStore store.UserRepository
 }
 
-func NewHub(redisOpt *redis.Options, roomStore *store.RoomStore, userStore *store.UserStore) (*Hub, error) {
-	pubsub, err := newPubSub(redisOpt)
+type clientCommand struct {
+	client  *Client
+	message Message
+}
+
+// NewHub starts a hub using injected repositories and a broker. The caller owns
+// the broker and repositories; closing this hub only closes its subscription.
+func NewHub(ctx context.Context, bus broker.Broker, roomStore store.RoomRepository, userStore store.UserRepository) (*Hub, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	subscription, err := bus.Subscribe(ctx, "room.*")
 	if err != nil {
+		cancel()
 		return nil, err
 	}
-
 	hub := &Hub{
-		register:   make(chan *Client),
-		unregister: make(chan *Client),
-
-		clients:   make(map[*Client]bool),
-		rooms:     make(map[*Room]bool),
-		roomsLive: make(map[string]*Room),
-
-		pubsub: pubsub,
-
-		roomStore: roomStore,
-		userStore: userStore,
+		register:     make(chan *Client),
+		unregister:   make(chan *Client),
+		commands:     make(chan clientCommand),
+		clients:      make(map[*Client]bool),
+		rooms:        make(map[string]*Room),
+		bus:          bus,
+		subscription: subscription,
+		ctx:          ctx,
+		cancel:       cancel,
+		done:         make(chan struct{}),
+		roomStore:    roomStore,
+		userStore:    userStore,
 	}
-
-	hub.users, err = userStore.GetAllUsers()
-	if err != nil {
-		return nil, err
-	}
-
+	go hub.run()
 	return hub, nil
 }
 
-func (hub *Hub) Run() {
-	go hub.listenPubSub()
-
+func (hub *Hub) run() {
+	defer close(hub.done)
+	defer hub.subscription.Close()
+	defer hub.cancel()
+	defer func() {
+		for client := range hub.clients {
+			client.close()
+		}
+	}()
 	for {
 		select {
-
+		case <-hub.ctx.Done():
+			return
 		case client := <-hub.register:
 			hub.addClient(client)
-
 		case client := <-hub.unregister:
 			hub.removeClient(client)
+		case command := <-hub.commands:
+			if hub.clients[command.client] {
+				hub.handleCommand(command)
+			}
+		case msg, ok := <-hub.subscription.Messages():
+			if !ok {
+				if hub.ctx.Err() == nil {
+					slog.ErrorContext(hub.ctx, "broker subscription closed; stopping hub", "topic", "room.*")
+				}
+				return
+			}
+			if room := hub.rooms[strings.TrimPrefix(msg.Topic, "room.")]; room != nil {
+				room.broadcastToClientsInRoom(msg.Payload)
+			}
 		}
 	}
+}
+
+func (hub *Hub) Close() error {
+	hub.cancel()
+	<-hub.done
+	return hub.subscription.Close()
 }
 
 func (hub *Hub) addClient(client *Client) {
+	ctx, cancel := context.WithTimeout(hub.ctx, 5*time.Second)
+	defer cancel()
+	if _, err := hub.userStore.AddUser(ctx, client.User); err != nil {
+		slog.ErrorContext(ctx, "register client failed", "error", err, "client.id", client.Xid)
+		client.close()
+		return
+	}
 	hub.clients[client] = true
-	fmt.Println("Joined size of connection pool: ", len(hub.clients))
 }
 
 func (hub *Hub) removeClient(client *Client) {
-	if _, ok := hub.clients[client]; ok {
-		delete(hub.clients, client)
-		hub.userStore.RemoveUser(client)
-		fmt.Println("Remaining size of connection pool: ", len(hub.clients))
+	for room := range client.rooms {
+		room.unregisterClientInRoom(client)
+		delete(client.rooms, room)
 	}
+	delete(hub.clients, client)
+	// Persist users after disconnect: room/message foreign keys still reference them.
+	client.close()
 }
 
-func (hub *Hub) broadcastToClients(message []byte) {
-	for client := range hub.clients {
-		client.send <- message
+func (hub *Hub) handleCommand(command clientCommand) {
+	client, msg := command.client, command.message
+	if msg.Room == nil {
+		return
 	}
-}
-
-func (hub *Hub) createRoom(client *store.User, name string, private bool) *Room {
-	room := &Room{
-		Room: store.Room{
-			Xid:         xid.New().String(),
-			Name:        name,
-			Description: "",
-			Owner_ID:    client.Xid,
-		},
-		Private:    private,
-		clients:    make(map[*Client]bool),
-		hub:        hub,
-		register:   make(chan *Client),
-		unregister: make(chan *Client),
-		broadcast:  make(chan []byte),
-	}
-
-	hub.userStore.AddUser(client)
-	hub.roomStore.AddRoom(room, client.Xid)
-
-	return room
-}
-
-func (hub *Hub) sendToRoom(XID string, msg string) {
-	hub.roomsLive[XID].broadcast <- []byte(msg)
-}
-
-func (hub *Hub) findClientById(ID string) *Client {
-	var foundClient *Client
-	for client := range hub.clients {
-		if client.GetXid() == ID {
-			foundClient = client
-			break
+	switch msg.Type {
+	case message.Normal.String():
+		room := hub.rooms[msg.Room.Xid]
+		if room == nil || !client.rooms[room] {
+			return
+		}
+		msg.Room, msg.Sender, msg.Action = room, client, message.SendMessage.String()
+		ctx, cancel := context.WithTimeout(hub.ctx, 5*time.Second)
+		defer cancel()
+		if err := hub.bus.Publish(ctx, "room."+room.Xid, msg.encode()); err != nil {
+			slog.ErrorContext(ctx, "publish room message failed", "error", err,
+				"client.id", client.Xid, "room.id", room.Xid)
+		}
+	case message.Command.String():
+		switch msg.Action {
+		case message.JoinRoom.String():
+			hub.joinRoom(client, msg.Room.Name)
+		case message.LeaveRoom.String():
+			if room := hub.rooms[msg.Room.Xid]; room != nil && client.rooms[room] {
+				delete(client.rooms, room)
+				room.unregisterClientInRoom(client)
+			}
 		}
 	}
-
-	return foundClient
 }
 
-func (hub *Hub) findUserById(ID string) store.User {
-	var foundUser store.User
-	for _, user := range hub.users {
-		if user.GetXid() == ID {
-			foundUser = user
-			break
-		}
+func (hub *Hub) joinRoom(client *Client, name string) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return
 	}
-
-	return foundUser
+	room, err := hub.findRoomByName(&client.User, name)
+	if err != nil {
+		slog.ErrorContext(hub.ctx, "join room failed", "error", err, "client.id", client.Xid, "room.name", name)
+		return
+	}
+	if !client.rooms[room] {
+		for previous := range client.rooms {
+			delete(client.rooms, previous)
+			previous.unregisterClientInRoom(client)
+		}
+		client.rooms[room] = true
+		room.registerClientInRoom(client)
+	}
+	notification := Message{
+		Type: message.Server.String(), Action: message.NotifyJoinRoomMessage.String(),
+		Room: room, Body: fmt.Sprintf("%v joined %v.", client.Xid, room.Name), Sender: serverSender,
+	}
+	client.enqueue(notification.encode())
 }
 
-func (hub *Hub) findRoomByName(client *store.User, name string) *Room {
-	var foundRoom *Room
-	for room := range hub.rooms {
-		if room.GetName() == name {
-			foundRoom = room
-			break
+func (hub *Hub) findRoomByName(client *store.User, name string) (*Room, error) {
+	for _, room := range hub.rooms {
+		if room.Name == name {
+			return room, nil
 		}
 	}
-
-	if foundRoom == nil {
-		foundRoom = hub.runRoomFromStore(client, name)
-	}
-
-	return foundRoom
-}
-
-func (hub *Hub) findRoomByXid(xid string) *Room {
-	var foundRoom *Room
-	for room := range hub.rooms {
-		if room.GetXid() == xid {
-			foundRoom = room
-			break
+	ctx, cancel := context.WithTimeout(hub.ctx, 5*time.Second)
+	defer cancel()
+	dbRoom, err := hub.roomStore.FindRoomByName(ctx, name)
+	if errors.Is(err, store.ErrNotFound) {
+		dbRoom, err = hub.roomStore.AddRoom(ctx, store.Room{Xid: xid.New().String(), Name: name, Owner_ID: client.Xid})
+		if err != nil {
+			// Another server may have created the same room concurrently.
+			if existing, findErr := hub.roomStore.FindRoomByName(ctx, name); findErr == nil {
+				dbRoom, err = existing, nil
+			}
 		}
 	}
-
-	return foundRoom
-}
-
-func (hub *Hub) runRoomFromStore(client *store.User, name string) *Room {
-	var room *Room
-	dbRoom := hub.roomStore.FindRoomByName(name)
-	// create room if it doesn't exist in roomStore
-	if dbRoom == nil {
-		room = hub.createRoom(client, name, false) // rooms are not private for now
-	} else {
-		// room exists, create room struct, run it, and add to rooms map
-		room = &Room{
-			Room: store.Room{
-				Xid:         dbRoom.GetXid(),
-				Name:        dbRoom.GetName(),
-				Description: dbRoom.GetDescription(),
-				Owner_ID:    dbRoom.GetOwnerId(),
-				Private:     dbRoom.GetPrivate(),
-			},
-			hub:        hub,
-			clients:    make(map[*Client]bool),
-			register:   make(chan *Client),
-			unregister: make(chan *Client),
-			broadcast:  make(chan []byte),
-		}
+	if err != nil {
+		return nil, err
 	}
-
-	go room.Run()
-	hub.rooms[room] = true
-	hub.roomsLive[room.GetXid()] = room
-
-	return room
+	room := &Room{Room: *dbRoom, clients: make(map[*Client]bool)}
+	hub.rooms[room.Xid] = room
+	return room, nil
 }

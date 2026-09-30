@@ -1,0 +1,25 @@
+CREATE TABLE IF NOT EXISTS "User" (
+    id INTEGER PRIMARY KEY,
+    xid TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    email TEXT NOT NULL UNIQUE,
+    password TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS "Room" (
+    id INTEGER PRIMARY KEY,
+    xid TEXT NOT NULL UNIQUE,
+    private BOOLEAN NOT NULL DEFAULT false,
+    name TEXT NOT NULL UNIQUE,
+    description TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    owner_id TEXT NOT NULL REFERENCES "User"(xid)
+);
+
+CREATE TABLE IF NOT EXISTS "Message" (
+    id INTEGER PRIMARY KEY,
+    body TEXT,
+    room_id TEXT NOT NULL REFERENCES "Room"(xid),
+    author_id TEXT NOT NULL REFERENCES "User"(xid),
+    timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

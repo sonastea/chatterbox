@@ -2,38 +2,62 @@ package main
 
 import (
 	"context"
-	"flag"
-	"log"
+	"log/slog"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/sonastea/chatterbox/internal/configs"
 	"github.com/sonastea/chatterbox/internal/pkg/box"
+	"github.com/sonastea/chatterbox/internal/pkg/broker"
 	"github.com/sonastea/chatterbox/internal/pkg/database"
+	"github.com/sonastea/chatterbox/internal/pkg/logging"
 	"github.com/sonastea/chatterbox/internal/pkg/store"
 )
 
 func main() {
-	ctx := context.Background()
-	flag.Parse()
+	slog.SetDefault(slog.New(logging.NewHandler(os.Stderr, os.Getenv("OTEL_SERVICE_NAME"))))
+	if err := run(); err != nil {
+		slog.Log(context.Background(), logging.LevelFatal, "chatterbox stopped", "error", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	cfg, err := configs.NewConfig()
 	if err != nil {
-		log.Fatalf("[NewConfig]: %v\n", err)
+		return err
 	}
 
 	srvCfg, err := cfg.HTTP()
 	if err != nil {
-		log.Fatalf("[ServerConfig] %v\n", err)
+		return err
 	}
 
-	err = database.InitDB(ctx)
+	startupCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	db, err := database.Open(startupCtx, cfg.Database)
 	if err != nil {
-		log.Fatalf("[InitDB] %v\n", err)
+		return err
 	}
+	defer db.Close()
 
-	pool := database.NewConnPool(ctx)
-    defer pool.Close()
+	bus, err := broker.Open(startupCtx, cfg.Broker)
+	if err != nil {
+		return err
+	}
+	defer bus.Close()
 
-	server := box.NewServer(srvCfg, cfg.RedisOpt, &store.RoomStore{DB: pool}, &store.UserStore{DB: pool})
+	server, err := box.NewServer(ctx, srvCfg, bus, &store.RoomStore{DB: db}, &store.UserStore{DB: db})
+	if err != nil {
+		return err
+	}
+	defer server.Close()
 
-	server.Start(ctx)
+	return server.Start(ctx)
 }

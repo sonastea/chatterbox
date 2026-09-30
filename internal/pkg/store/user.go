@@ -2,30 +2,25 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
-	"log"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/sonastea/chatterbox/internal/pkg/database"
 )
 
-type user interface {
-	GetId() int
-	GetXid() string
-	GetName() string
-	GetEmail() string
-	GetPassword() string
-}
-
-type userStore interface {
-	AddUser(user User) (*User, error)
-	RemoveUser(user User) error
-	FindUserByXid(xid string) (*User, error)
-	GetAllUsers() ([]User, error)
+type UserRepository interface {
+	AddUser(ctx context.Context, user User) (*User, error)
+	RemoveUser(ctx context.Context, xid string) error
+	FindUserByXid(ctx context.Context, xid string) (*User, error)
+	GetAllUsers(ctx context.Context) ([]User, error)
 }
 
 type UserStore struct {
-	DB *pgxpool.Pool
+	DB *database.DB
 }
+
+var _ UserRepository = (*UserStore)(nil)
 
 type User struct {
 	Id       int    `json:"id"`
@@ -55,71 +50,57 @@ func (user *User) GetPassword() string {
 	return user.Password
 }
 
-func (us *UserStore) AddUser(client user) (*User, error) {
-	query :=
-		`INSERT INTO chatterbox."User"(xid, name, email, password) VALUES($1, $2, $3, $4)
-            RETURNING xid, name, email`
-
+func (us *UserStore) AddUser(ctx context.Context, client User) (*User, error) {
+	query := fmt.Sprintf(`INSERT INTO %s(xid, name, email, password) VALUES($1, $2, $3, $4)
+        RETURNING id, xid, name, email`, us.DB.Dialect.Table("User"))
 	var user User
-	err := us.DB.QueryRow(
-		context.Background(),
-		query,
-		client.GetXid(), client.GetName(), client.GetName()+"@example.com", client.GetPassword()).
-		Scan(&user.Xid, &user.Name, &user.Email)
-
+	err := us.DB.QueryRowContext(ctx, query, client.Xid, client.Name, client.Email, client.Password).
+		Scan(&user.Id, &user.Xid, &user.Name, &user.Email)
 	if err != nil {
-		log.Printf("Error adding user: %v\n", err)
-		return nil, err
+		return nil, fmt.Errorf("add user: %w", err)
 	}
-
-	return &user, err
-}
-
-func (us *UserStore) RemoveUser(client user) error {
-	query := `DELETE from chatterbox."User" WHERE name = $1`
-
-	_, err := us.DB.Exec(context.Background(), query, client.GetName())
-	if err != nil {
-		log.Printf("Error removing user: %v\n", err)
-		return fmt.Errorf("Error removing user: %w\n", err)
-	}
-
-	return nil
-}
-
-func (us *UserStore) FindUserByXid(xid string) (*User, error) {
-	query := `SELECT xid, name, email from chatterbox."User" WHERE xid = $1 LIMIT 1`
-
-	var user User
-	err := us.DB.QueryRow(context.Background(), query, xid).Scan(&user.Xid, &user.Name, &user.Email)
-	if err != nil {
-		log.Printf("Error finding user by xid: %v\n", err)
-		return nil, fmt.Errorf("Error finding user by xid: %w\n", err)
-	}
-
 	return &user, nil
 }
 
-func (us *UserStore) GetAllUsers() ([]User, error) {
-	query := `SELECT xid, name, email FROM chatterbox."User"`
-
-	rows, err := us.DB.Query(context.Background(), query)
+func (us *UserStore) RemoveUser(ctx context.Context, xid string) error {
+	query := fmt.Sprintf(`DELETE FROM %s WHERE xid = $1`, us.DB.Dialect.Table("User"))
+	_, err := us.DB.ExecContext(ctx, query, xid)
 	if err != nil {
-		log.Printf("Error getting all users: %v\n", err)
-		return nil, fmt.Errorf("Error getting all users: %w\n", err)
+		return fmt.Errorf("remove user: %w", err)
+	}
+	return nil
+}
+
+func (us *UserStore) FindUserByXid(ctx context.Context, xid string) (*User, error) {
+	query := fmt.Sprintf(`SELECT id, xid, name, email FROM %s WHERE xid = $1 LIMIT 1`, us.DB.Dialect.Table("User"))
+	var user User
+	err := us.DB.QueryRowContext(ctx, query, xid).Scan(&user.Id, &user.Xid, &user.Name, &user.Email)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find user by xid: %w", err)
+	}
+	return &user, nil
+}
+
+func (us *UserStore) GetAllUsers(ctx context.Context) ([]User, error) {
+	query := fmt.Sprintf(`SELECT id, xid, name, email FROM %s ORDER BY id`, us.DB.Dialect.Table("User"))
+	rows, err := us.DB.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("get users: %w", err)
 	}
 	defer rows.Close()
-
 	var users []User
 	for rows.Next() {
 		var user User
-		if err := rows.Scan(&user.Xid, &user.Name, &user.Email); err != nil {
-			log.Printf("Error scanning user row: %v\n", err)
-			return nil, fmt.Errorf("Error scanning user row: %w\n", err)
-
+		if err := rows.Scan(&user.Id, &user.Xid, &user.Name, &user.Email); err != nil {
+			return nil, fmt.Errorf("scan user: %w", err)
 		}
 		users = append(users, user)
 	}
-
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read users: %w", err)
+	}
 	return users, nil
 }

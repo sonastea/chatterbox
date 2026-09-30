@@ -1,11 +1,11 @@
 # syntax=docker/dockerfile:1
 
-FROM golang:1.22-alpine
+FROM golang:1.27-alpine
 
 RUN mkdir /opt/chatterbox
 WORKDIR /opt/chatterbox
 
-RUN apk add --no-cache git=2.43.0-r0 build-base=0.5-r3
+RUN apk add --no-cache git build-base
 
 COPY go.mod .
 COPY go.sum .

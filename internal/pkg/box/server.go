@@ -2,17 +2,15 @@ package box
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
-	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/redis/go-redis/v9"
 	"github.com/rs/xid"
+	"github.com/sonastea/chatterbox/internal/pkg/broker"
 	"github.com/sonastea/chatterbox/internal/pkg/store"
 )
 
@@ -21,35 +19,36 @@ type Config struct {
 	ReadTimeout  time.Duration
 	WriteTimeout time.Duration
 	IdleTimeout  time.Duration
+	TLSCert      string
+	TLSKey       string
 }
 
 type Server struct {
 	server *http.Server
 	config *Config
+	hub    *Hub
 }
 
 var (
-	tlsCert = ("./certs/chatterbox-cert.pem")
-	tlsKey  = ("./certs/chatterbox-key.pem")
-
 	upgrader = websocket.Upgrader{
 		ReadBufferSize:  1024,
 		WriteBufferSize: 1024,
 		// Returning true for now, but should check origin.
 		CheckOrigin: func(r *http.Request) bool {
-			log.Printf("Origin %v\n", r.Header.Get("Origin"))
+			slog.InfoContext(r.Context(), "websocket connection origin", "origin", r.Header.Get("Origin"))
 			return true
 		},
 	}
 )
 
-func NewServer(cfg *Config, redisOpt *redis.Options, roomStore *store.RoomStore, userStore *store.UserStore) *Server {
-	hub, err := NewHub(redisOpt, roomStore, userStore)
-	if err != nil {
-		log.Fatal(err)
+func NewServer(ctx context.Context, cfg *Config, bus broker.Broker, roomStore store.RoomRepository, userStore store.UserRepository) (*Server, error) {
+	if (cfg.TLSCert == "") != (cfg.TLSKey == "") {
+		return nil, fmt.Errorf("TLS certificate and key must be configured together")
 	}
-
-	go hub.Run()
+	hub, err := NewHub(ctx, bus, roomStore, userStore)
+	if err != nil {
+		return nil, err
+	}
 
 	router := http.NewServeMux()
 	router.Handle("/ws", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -62,17 +61,16 @@ func NewServer(cfg *Config, redisOpt *redis.Options, roomStore *store.RoomStore,
 		ReadTimeout:  cfg.ReadTimeout,
 		WriteTimeout: cfg.WriteTimeout,
 		IdleTimeout:  cfg.IdleTimeout,
+		ErrorLog:     slog.NewLogLogger(slog.Default().With("component", "http").Handler(), slog.LevelError),
 	}
 
-	s := &Server{server: srv, config: cfg}
-
-	return s
+	return &Server{server: srv, config: cfg, hub: hub}, nil
 }
 
 func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Println(err)
+		slog.WarnContext(r.Context(), "websocket upgrade failed", "error", err)
 		return
 	}
 	newId := xid.New().String()
@@ -81,41 +79,59 @@ func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 		User: store.User{
 			Xid:      newId,
 			Name:     newId,
-			Email:    newId + "example.com",
+			Email:    newId + "@example.com",
 			Password: "",
 		},
 		hub:   hub,
 		conn:  conn,
 		rooms: make(map[*Room]bool),
-		send:  make(chan []byte),
+		send:  make(chan []byte, 256),
+		done:  make(chan struct{}),
 	}
 
-	client.hub.register <- client
+	select {
+	case client.hub.register <- client:
+	case <-hub.ctx.Done():
+		client.close()
+		return
+	}
 
 	go client.writePump()
 	go client.readPump()
 }
 
-func (s *Server) Start(ctx context.Context) {
-	fmt.Printf("chatterbox is now listening on %s\n", s.server.Addr)
+func (s *Server) Start(ctx context.Context) error {
+	transport := "HTTP/WS, app-level TLS disabled"
+	if s.config.TLSCert != "" {
+		transport = "HTTPS/WSS, TLS terminated by app"
+	}
+	slog.InfoContext(ctx, "chatterbox is now listening", "address", s.server.Addr,
+		"transport", transport, "tls.enabled", s.config.TLSCert != "")
+	result := make(chan error, 1)
 	go func() {
-		if err := s.server.ListenAndServeTLS(tlsCert, tlsKey); err != http.ErrServerClosed {
-			log.Fatalf("Fatal error: chatterbox server ListenAndServe: %v\n", err)
+		if s.config.TLSCert != "" {
+			result <- s.server.ListenAndServeTLS(s.config.TLSCert, s.config.TLSKey)
+		} else {
+			result <- s.server.ListenAndServe()
 		}
 	}()
-
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGINT)
-
-    recvSig := <-stop
-    log.Printf("[WARN] received signal: %v", recvSig)
-
-	cleansedCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	if err := s.server.Shutdown(cleansedCtx); err != nil {
-		log.Printf("Shutdown error: %v\n", err)
-	} else {
-		log.Printf("Shutdown successful\n")
+	var serveErr error
+	select {
+	case <-ctx.Done():
+	case <-s.hub.done:
+		if ctx.Err() == nil {
+			serveErr = fmt.Errorf("chat hub stopped unexpectedly")
+		}
+	case err := <-result:
+		if !errors.Is(err, http.ErrServerClosed) {
+			serveErr = err
+		}
 	}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return errors.Join(serveErr, s.server.Shutdown(shutdownCtx), s.hub.Close())
+}
+
+func (s *Server) Close() error {
+	return errors.Join(s.server.Close(), s.hub.Close())
 }

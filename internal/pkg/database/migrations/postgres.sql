@@ -1,7 +1,7 @@
-CREATE SCHEMA IF NOT EXISTS chatterbox AUTHORIZATION postgres;
+CREATE SCHEMA IF NOT EXISTS chatterbox;
 
 
-SET search_path TO chatterbox;
+SET LOCAL search_path TO chatterbox;
 
 
 CREATE TABLE IF NOT EXISTS "User" (

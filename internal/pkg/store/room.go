@@ -2,30 +2,28 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
-	"log"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/sonastea/chatterbox/internal/pkg/database"
 )
 
-type room interface {
-	GetId() int
-	GetXid() string
-	GetPrivate() bool
-	GetName() string
-	GetDescription() string
-	GetOwnerId() string
-}
-
-type roomStore interface {
-	AddRoom(room Room, owner_id string) error
-	FindRoomByName(name string) Room
-	FindRoomByXid(xid string) Room
+// RoomRepository is the persistence boundary used by the chat hub.
+// Implementations need not use SQL. Missing records return ErrNotFound.
+type RoomRepository interface {
+	AddRoom(ctx context.Context, room Room) (*Room, error)
+	FindRoomByName(ctx context.Context, name string) (*Room, error)
+	FindRoomByXid(ctx context.Context, xid string) (*Room, error)
 }
 
 type RoomStore struct {
-	DB *pgxpool.Pool
+	DB *database.DB
 }
+
+var ErrNotFound = errors.New("record not found")
+
+var _ RoomRepository = (*RoomStore)(nil)
 
 type Room struct {
 	ID          int    `json:"id,omitempty"`
@@ -60,60 +58,33 @@ func (room *Room) GetOwnerId() string {
 	return room.Owner_ID
 }
 
-func (rs *RoomStore) AddRoom(room room, owner_id string) error {
-	query := `INSERT INTO chatterbox."Room"(xid, name, description, owner_id) VALUES($1, $2, $3, $4)`
-
-	stmt, err := rs.DB.Query(
-		context.Background(),
-		query,
-		room.GetXid(), room.GetName(), room.GetDescription(), owner_id,
-	)
-	if err != nil {
-		log.Printf("Error adding room %v\n", err)
-		return fmt.Errorf("Error adding room %w\n", err)
-	}
-	defer stmt.Close()
-
-	return nil
+func (rs *RoomStore) AddRoom(ctx context.Context, room Room) (*Room, error) {
+	query := fmt.Sprintf(`INSERT INTO %s(xid, private, name, description, owner_id)
+        VALUES($1, $2, $3, $4, $5)
+        RETURNING id, xid, private, name, COALESCE(description, ''), owner_id`, rs.DB.Dialect.Table("Room"))
+	return scanRoom(rs.DB.QueryRowContext(ctx, query, room.Xid, room.Private, room.Name, room.Description, room.Owner_ID))
 }
 
-func (rs *RoomStore) FindRoomByName(name string) room {
-	stmt, err := rs.DB.Query(
-		context.Background(),
-		`SELECT xid, private, name, description, owner_id from chatterbox."Room" WHERE name = $1 LIMIT 1;`,
-		name,
-	)
-	if err != nil {
-		log.Println(err)
-	}
-	defer stmt.Close()
-
-	var room Room
-	row := stmt.Next()
-	if row == false {
-		return nil
-	}
-
-    if err := stmt.Scan(&room.Xid, &room.Private, &room.Name, &room.Description, &room.Owner_ID); err != nil {
-		log.Println(err)
-	}
-
-	return &room
+func (rs *RoomStore) FindRoomByName(ctx context.Context, name string) (*Room, error) {
+	query := fmt.Sprintf(`SELECT id, xid, private, name, COALESCE(description, ''), owner_id
+        FROM %s WHERE name = $1 LIMIT 1`, rs.DB.Dialect.Table("Room"))
+	return scanRoom(rs.DB.QueryRowContext(ctx, query, name))
 }
 
-func (rs *RoomStore) FindRoomByXid(xid string) room {
-	stmt, err := rs.DB.Query(context.Background(), `SELECT from chatterbox."Room" WHERE xid = $1`, xid)
-	if err != nil {
-		log.Println(err)
-	}
-	defer stmt.Close()
+func (rs *RoomStore) FindRoomByXid(ctx context.Context, xid string) (*Room, error) {
+	query := fmt.Sprintf(`SELECT id, xid, private, name, COALESCE(description, ''), owner_id
+        FROM %s WHERE xid = $1 LIMIT 1`, rs.DB.Dialect.Table("Room"))
+	return scanRoom(rs.DB.QueryRowContext(ctx, query, xid))
+}
 
+func scanRoom(row *sql.Row) (*Room, error) {
 	var room Room
-	for stmt.Next() {
-		if err := stmt.Scan(&room.Xid, &room.Private, &room.Name, &room.Description); err != nil {
-			log.Println(err)
-		}
+	err := row.Scan(&room.ID, &room.Xid, &room.Private, &room.Name, &room.Description, &room.Owner_ID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
 	}
-
-	return &room
+	if err != nil {
+		return nil, fmt.Errorf("read room: %w", err)
+	}
+	return &room, nil
 }

@@ -25,3 +25,13 @@ go.work
 # Env files
 .env
 .envrc
+
+# Local SQLite databases and journals
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite-journal

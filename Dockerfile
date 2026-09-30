@@ -1,11 +1,11 @@
 # syntax=docker/dockerfile:1
 
-FROM golang:1.24-alpine AS builder
+FROM golang:1.27-alpine AS builder
 
 RUN mkdir /opt/chatterbox
 WORKDIR /opt/chatterbox
 
-RUN apk add --no-cache git=2.49.1-r0 build-base=0.5-r3
+RUN apk add --no-cache git
 
 COPY go.mod .
 COPY go.sum .
@@ -15,12 +15,12 @@ COPY . .
 
 WORKDIR /opt/chatterbox/cmd/server
 
-RUN go build -o server
+RUN CGO_ENABLED=0 go build -o server
 
 FROM alpine:3
-COPY --from=builder /opt/chatterbox/sql /opt/chatterbox/sql
 COPY --from=builder /opt/chatterbox/cmd/server/server /opt/chatterbox/server
-RUN mkdir /opt/chatterbox/certs
+RUN apk add --no-cache ca-certificates && mkdir -p /opt/chatterbox/certs /opt/chatterbox/data
+ENV DATABASE_URL=file:/opt/chatterbox/data/chatterbox.db
 EXPOSE 8443
 
 WORKDIR /opt/chatterbox

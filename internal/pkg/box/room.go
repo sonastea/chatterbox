@@ -8,17 +8,8 @@ import (
 )
 
 type Room struct {
-    store.Room
-
-	Private bool `json:"private"`
+	store.Room
 	clients map[*Client]bool
-
-	hub *Hub
-
-	register   chan *Client
-	unregister chan *Client
-
-	broadcast chan []byte
 }
 
 func (room *Room) GetId() int {
@@ -45,28 +36,13 @@ func (room *Room) GetOwnerId() string {
 	return room.Owner_ID
 }
 
-func (room *Room) Run() {
-	for {
-		select {
-		case client := <-room.register:
-			room.registerClientInRoom(client)
-
-		case client := <-room.unregister:
-			room.unregisterClientInRoom(client)
-
-		case message := <-room.broadcast:
-			room.broadcastToClientsInRoom([]byte(message))
-		}
-	}
-}
-
 func (room *Room) registerClientInRoom(client *Client) {
 	msg := Message{
 		Type:   string(message.Server),
 		Action: string(message.JoinRoomMessage),
 		Room:   room,
 		Body:   fmt.Sprintf("%v has joined. Say hi.", client.GetXid()),
-		Sender: broker,
+		Sender: serverSender,
 	}
 
 	room.broadcastToClientsInRoom(msg.encode())
@@ -79,7 +55,7 @@ func (room *Room) unregisterClientInRoom(client *Client) {
 		Action: string(message.LeaveRoomMessage),
 		Room:   room,
 		Body:   fmt.Sprintf("%v left the room.", client.GetXid()),
-		Sender: broker,
+		Sender: serverSender,
 	}
 
 	if _, ok := room.clients[client]; ok {
@@ -91,6 +67,6 @@ func (room *Room) unregisterClientInRoom(client *Client) {
 
 func (room *Room) broadcastToClientsInRoom(msg []byte) {
 	for client := range room.clients {
-		client.send <- msg
+		client.enqueue(msg)
 	}
 }

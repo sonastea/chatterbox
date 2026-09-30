@@ -2,7 +2,7 @@ package box
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 )
 
 type Message struct {
@@ -16,7 +16,7 @@ type Message struct {
 func (message *Message) encode() []byte {
 	json, err := json.Marshal(message)
 	if err != nil {
-		log.Println(err)
+		slog.Error("encode JSON message failed", "error", err, "message.type", message.Type, "message.action", message.Action)
 	}
 
 	return json
