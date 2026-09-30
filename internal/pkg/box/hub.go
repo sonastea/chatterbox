@@ -28,8 +28,9 @@ type Hub struct {
 	workers    sync.WaitGroup
 
 	// All client and room state is owned by the hub event loop.
-	clients map[*Client]bool // false while registration is pending
-	rooms   map[string]*Room
+	clients     map[*Client]bool // false while registration is pending
+	rooms       map[string]*Room
+	roomsByName map[string]*Room
 
 	bus          broker.Broker
 	subscription broker.Subscription
@@ -69,6 +70,7 @@ func NewHub(ctx context.Context, bus broker.Broker, roomStore store.RoomReposito
 		results:      make(chan databaseResult),
 		clients:      make(map[*Client]bool),
 		rooms:        make(map[string]*Room),
+		roomsByName:  make(map[string]*Room),
 		bus:          bus,
 		subscription: subscription,
 		ctx:          ctx,
@@ -178,11 +180,9 @@ func (hub *Hub) handleCommand(command clientCommand) bool {
 			if name == "" {
 				return false
 			}
-			for _, room := range hub.rooms {
-				if room.Name == name {
-					hub.joinRoom(client, room)
-					return false
-				}
+			if room := hub.roomsByName[name]; room != nil {
+				hub.joinRoom(client, room)
+				return false
 			}
 			return hub.queueDatabase(databaseJob{
 				client: client, user: client.User, roomName: name, done: command.done,
@@ -213,6 +213,10 @@ func (hub *Hub) leaveRoom(client *Client) {
 	if room := client.room; room != nil {
 		client.room = nil
 		room.unregisterClientInRoom(client)
+		if len(room.clients) == 0 {
+			delete(hub.rooms, room.Xid)
+			delete(hub.roomsByName, room.Name)
+		}
 	}
 }
 

@@ -253,7 +253,7 @@ func TestHubRoomLookupOrderingAndDisconnect(t *testing.T) {
 				close(release)
 				awaitWorker(t, command.done) // result applied after unregister
 				hub.Close()
-				if _, exists := hub.clients[actor]; exists || actor.room != nil || hub.rooms["slow"] != nil {
+				if _, exists := hub.clients[actor]; exists || actor.room != nil || hub.rooms["slow"] != nil || hub.roomsByName["slow"] != nil {
 					t.Fatal("late room result resurrected a disconnected client")
 				}
 				return

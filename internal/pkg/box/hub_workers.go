@@ -153,6 +153,7 @@ func (hub *Hub) applyDatabaseResult(result databaseResult) {
 	if room == nil {
 		room = &Room{Room: *result.room, clients: make(map[*Client]bool)}
 		hub.rooms[room.Xid] = room
+		hub.roomsByName[room.Name] = room
 	}
 	hub.joinRoom(client, room)
 }
