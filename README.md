@@ -168,6 +168,9 @@ provider-specific credentials).
 # No external services required
 go test -race ./...
 
+# Simulate concurrent WebSocket users against an isolated local test server
+go run ./simulations
+
 # Starts PostgreSQL, Redis, Valkey, NATS, and RabbitMQ using Docker Compose,
 # runs race-enabled repository, broker-contract, and cross-hub WebSocket tests,
 # then removes only the test stack and its volumes.
@@ -181,3 +184,81 @@ The Compose stack binds test ports on loopback: `15432`, `16379`, `16380`,
 `14222`, and `15672`. Individual integrations can instead be enabled with
 `TEST_POSTGRES_URL`, `TEST_REDIS_URL`, `TEST_VALKEY_URL`, `TEST_NATS_URL`, or
 `TEST_RABBITMQ_URL`. Use a **dedicated test database/broker** for these variables.
+
+### Simulated users
+
+`go run ./simulations` connects 10 users to 2 rooms and sends 10 chat messages
+per user concurrently. It checks every expected delivery, including sender echoes,
+and fails on missing messages, duplicates, incorrect sender identities, or messages
+leaking between rooms. The simulation also verifies:
+
+- Per-sender message ordering, including under continuing traffic.
+- Join/leave notification actions, room IDs, actors, server identity, and recipients,
+  with no missing or duplicate notifications. Concurrent join order may vary.
+- Forged sender/action fields are replaced and non-members cannot publish.
+- Repeated joins/leaves are idempotent; leaving and switching rooms remove old
+  publish and receive authorization.
+- Leave, room switching, disconnect, and reconnect while another room member keeps
+  sending. Barrier-ordered probes check isolation, and reconnects retain room IDs,
+  get new connection identities, and do not replay traffic from absent membership.
+- Unicode and embedded newlines round-trip unchanged. A 1,000-byte JSON frame is
+  accepted; a 1,001-byte frame closes only its sender with WebSocket code 1009,
+  while the remaining clients continue chatting. These sizes include the JSON
+  envelope and the encoder's final newline, not just the message body.
+
+By default it uses the real WebSocket handler with an ephemeral HTTP port,
+in-memory SQLite, and the memory broker. It does **not** start external services or
+touch `chatterbox.db`, and it cleans up its connections and server when finished.
+The simulation also runs as part of `go test -race ./...`.
+
+Local runs also include a deterministic saturated-memory-broker recovery scenario.
+It fills a gated subscription queue, allows a blocked publication to time out, then
+verifies subsequent ordered chat delivery. This tests recovery, not lossless fan-out
+under overload, and does not fix the known burst issue below. This injected-failure
+scenario is not run against `SIM_URL` deployments. The churn background sender uses
+a fixed 10ms interval independently of `SIM_INTERVAL`.
+
+Run the command from the repository root. It launches the same race-enabled Go
+test with caching disabled, inherits the `SIM_*` variables below, and accepts Go
+test flags such as `-timeout=2m`. `./scripts/test-users.sh` is an equivalent shortcut.
+
+```sh
+# More users and messages, with a pause between each user's sends
+SIM_USERS=50 SIM_ROOMS=5 SIM_MESSAGES=20 SIM_INTERVAL=25ms go run ./simulations
+
+# Test an already-running server and its configured database/broker
+SIM_URL=ws://localhost:8443/ws go run ./simulations
+
+# Burst traffic, with a larger per-phase timeout
+SIM_USERS=50 SIM_ROOMS=5 SIM_MESSAGES=50 SIM_INTERVAL=0s SIM_TIMEOUT=30s go run ./simulations
+```
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `SIM_URL` | Unset | Start an isolated test server, or target a `ws://` / `wss://` endpoint |
+| `SIM_USERS` | `10` | Concurrent clients; at least 2 |
+| `SIM_ROOMS` | `2` | Rooms; from 1 to `SIM_USERS / 2`, ensuring at least two users per room |
+| `SIM_MESSAGES` | `10` | Chat messages per user in the main traffic phase; at least 1 |
+| `SIM_INTERVAL` | `20ms` | Pause between each user's sends; `0s` sends without a pause |
+| `SIM_TIMEOUT` | `15s` | Timeout for each connection attempt and test phase, including send pauses |
+
+The command prints a pass/fail summary and exits nonzero on failure, suitable for CI.
+It uses unique room names for each run. **Use a dedicated test deployment with
+`SIM_URL`: simulated users and rooms persist in that server's database.** TLS
+certificate verification remains enabled for `wss://` endpoints.
+
+This is a correctness smoke test under configurable load, not a capacity benchmark
+or proof of production readiness. Larger rooms multiply fan-out: 10 users in
+2 evenly sized rooms sending 10 messages produce 500 deliveries in the main phase.
+Overloading the server can legitimately drop best-effort broker events or disconnect
+slow clients; the simulation reports those as failures. Late unexpected messages
+are also checked during 200ms observation windows while a user remains outside its
+room, before closing connections for reconnect, and at the end. Use the full unit and
+Docker integration suites above to cover configuration, persistence, shutdown, and
+all external broker adapters.
+
+**Known issue exposed by burst traffic:** the current memory broker can stall with
+the no-pause burst example above. The hub publishes into a bounded subscription
+queue that the same hub event loop must drain; when it fills, publication blocks
+until its timeout and messages are lost. A nonzero `SIM_INTERVAL` is useful for
+routine smoke tests; burst traffic reproduces this existing backpressure issue.
