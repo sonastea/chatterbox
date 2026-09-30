@@ -135,10 +135,7 @@ func (hub *Hub) addClient(client *Client) {
 }
 
 func (hub *Hub) removeClient(client *Client) {
-	for room := range client.rooms {
-		room.unregisterClientInRoom(client)
-		delete(client.rooms, room)
-	}
+	hub.leaveRoom(client)
 	delete(hub.clients, client)
 	// Persist users after disconnect: room/message foreign keys still reference them.
 	client.close()
@@ -158,7 +155,7 @@ func (hub *Hub) handleCommand(command clientCommand) bool {
 	switch msg.Type {
 	case message.Normal.String():
 		room := hub.rooms[msg.Room.Xid]
-		if room == nil || !client.rooms[room] {
+		if room == nil || client.room != room {
 			return false
 		}
 		msg.Room, msg.Sender, msg.Action = room, client, message.SendMessage.String()
@@ -191,9 +188,8 @@ func (hub *Hub) handleCommand(command clientCommand) bool {
 				client: client, user: client.User, roomName: name, done: command.done,
 			})
 		case message.LeaveRoom.String():
-			if room := hub.rooms[msg.Room.Xid]; room != nil && client.rooms[room] {
-				delete(client.rooms, room)
-				room.unregisterClientInRoom(client)
+			if room := hub.rooms[msg.Room.Xid]; room != nil && client.room == room {
+				hub.leaveRoom(client)
 			}
 		}
 	}
@@ -201,12 +197,9 @@ func (hub *Hub) handleCommand(command clientCommand) bool {
 }
 
 func (hub *Hub) joinRoom(client *Client, room *Room) {
-	if !client.rooms[room] {
-		for previous := range client.rooms {
-			delete(client.rooms, previous)
-			previous.unregisterClientInRoom(client)
-		}
-		client.rooms[room] = true
+	if client.room != room {
+		hub.leaveRoom(client)
+		client.room = room
 		room.registerClientInRoom(client)
 	}
 	notification := Message{
@@ -214,6 +207,13 @@ func (hub *Hub) joinRoom(client *Client, room *Room) {
 		Room: room, Body: fmt.Sprintf("%v joined %v.", client.Xid, room.Name), Sender: serverSender,
 	}
 	client.enqueue(notification.encode())
+}
+
+func (hub *Hub) leaveRoom(client *Client) {
+	if room := client.room; room != nil {
+		client.room = nil
+		room.unregisterClientInRoom(client)
+	}
 }
 
 func (hub *Hub) overloaded(client *Client, queue string) {

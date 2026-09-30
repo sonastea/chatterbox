@@ -84,7 +84,6 @@ func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 		},
 		hub:        hub,
 		conn:       conn,
-		rooms:      make(map[*Room]bool),
 		send:       make(chan []byte, 256),
 		done:       make(chan struct{}),
 		registered: make(chan struct{}),

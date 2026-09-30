@@ -30,8 +30,8 @@ type Client struct {
 	store.User
 	conn *websocket.Conn
 
-	hub   *Hub
-	rooms map[*Room]bool
+	hub  *Hub
+	room *Room
 
 	send       chan []byte
 	done       chan struct{}

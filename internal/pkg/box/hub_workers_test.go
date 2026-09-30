@@ -50,7 +50,7 @@ func newWorkerHub(t *testing.T, bus broker.Broker, rooms hubWorkerRooms, users h
 func workerClient(t *testing.T, hub *Hub, id string) *Client {
 	t.Helper()
 	client := &Client{
-		User: store.User{Xid: id}, hub: hub, rooms: make(map[*Room]bool),
+		User: store.User{Xid: id}, hub: hub,
 		send: make(chan []byte, 2*hubWorkQueueSize+16),
 		done: make(chan struct{}), registered: make(chan struct{}),
 	}
@@ -253,7 +253,7 @@ func TestHubRoomLookupOrderingAndDisconnect(t *testing.T) {
 				close(release)
 				awaitWorker(t, command.done) // result applied after unregister
 				hub.Close()
-				if _, exists := hub.clients[actor]; exists || len(actor.rooms) != 0 || hub.rooms["slow"] != nil {
+				if _, exists := hub.clients[actor]; exists || actor.room != nil || hub.rooms["slow"] != nil {
 					t.Fatal("late room result resurrected a disconnected client")
 				}
 				return
@@ -283,7 +283,7 @@ func TestHubRoomLookupOrderingAndDisconnect(t *testing.T) {
 				t.Fatalf("commands reordered around room lookup: %+v", got)
 			}
 			hub.Close()
-			if len(actor.rooms) != 1 || !actor.rooms[hub.rooms["old"]] {
+			if actor.room == nil || actor.room != hub.rooms["old"] {
 				t.Fatal("room commands did not preserve final membership")
 			}
 		})
