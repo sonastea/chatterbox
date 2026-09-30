@@ -212,10 +212,10 @@ touch `chatterbox.db`, and it cleans up its connections and server when finished
 The simulation also runs as part of `go test -race ./...`.
 
 Local runs also include a deterministic saturated-memory-broker recovery scenario.
-It fills a gated subscription queue, allows a blocked publication to time out, then
-verifies subsequent ordered chat delivery. This tests recovery, not lossless fan-out
-under overload, and does not fix the known burst issue below. This injected-failure
-scenario is not run against `SIM_URL` deployments. The churn background sender uses
+It fills a gated subscription queue, then verifies that the hub drains it while
+publication is blocked, delivering the message before its deadline and preserving
+subsequent chat order. This injected-failure scenario is not run against `SIM_URL`
+deployments. The churn background sender uses
 a fixed 10ms interval independently of `SIM_INTERVAL`.
 
 Run the command from the repository root. It launches the same race-enabled Go
@@ -257,8 +257,10 @@ room, before closing connections for reconnect, and at the end. Use the full uni
 Docker integration suites above to cover configuration, persistence, shutdown, and
 all external broker adapters.
 
-**Known issue exposed by burst traffic:** the current memory broker can stall with
-the no-pause burst example above. The hub publishes into a bounded subscription
-queue that the same hub event loop must drain; when it fills, publication blocks
-until its timeout and messages are lost. A nonzero `SIM_INTERVAL` is useful for
-routine smoke tests; burst traffic reproduces this existing backpressure issue.
+The hub uses one ordered publication worker and four database workers, each work
+queue bounded to 256 entries. Each connection waits for its outstanding command,
+preserving command order and applying backpressure to senders while the hub keeps
+draining broker events. A full work queue logs the overload and disconnects the
+submitting client. The five-second work deadline includes queue time; publication
+failures are logged and delivery remains best-effort. Shutdown cancels queued and
+in-flight work and waits for the workers before returning.

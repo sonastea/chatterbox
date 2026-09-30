@@ -82,11 +82,12 @@ func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 			Email:    newId + "@example.com",
 			Password: "",
 		},
-		hub:   hub,
-		conn:  conn,
-		rooms: make(map[*Room]bool),
-		send:  make(chan []byte, 256),
-		done:  make(chan struct{}),
+		hub:        hub,
+		conn:       conn,
+		rooms:      make(map[*Room]bool),
+		send:       make(chan []byte, 256),
+		done:       make(chan struct{}),
+		registered: make(chan struct{}),
 	}
 
 	select {

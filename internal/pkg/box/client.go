@@ -33,9 +33,10 @@ type Client struct {
 	hub   *Hub
 	rooms map[*Room]bool
 
-	send      chan []byte
-	done      chan struct{}
-	closeOnce sync.Once
+	send       chan []byte
+	done       chan struct{}
+	registered chan struct{}
+	closeOnce  sync.Once
 }
 
 func (client *Client) close() {
@@ -89,6 +90,14 @@ func (client *Client) readPump() {
 		case <-client.hub.ctx.Done():
 		}
 	}()
+
+	select {
+	case <-client.registered:
+	case <-client.done:
+		return
+	case <-client.hub.ctx.Done():
+		return
+	}
 
 	client.conn.SetReadLimit(maxMessageSize)
 	client.conn.SetReadDeadline(time.Now().Add(pongWait))
@@ -163,8 +172,18 @@ func (client *Client) handleIncomingMessage(msg []byte) {
 		return
 	}
 	m.Sender = client
+	command := clientCommand{client: client, message: m, done: make(chan struct{})}
 	select {
-	case client.hub.commands <- clientCommand{client: client, message: m}:
+	case client.hub.commands <- command:
+	case <-client.hub.ctx.Done():
+		return
+	case <-client.done:
+		return
+	}
+	// One outstanding command per connection bounds work and preserves ordering
+	// through asynchronous registration, room lookup, and publication.
+	select {
+	case <-command.done:
 	case <-client.hub.ctx.Done():
 	case <-client.done:
 	}

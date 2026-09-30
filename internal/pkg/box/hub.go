@@ -2,10 +2,10 @@ package box
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rs/xid"
@@ -22,9 +22,13 @@ type Hub struct {
 	register   chan *Client
 	unregister chan *Client
 	commands   chan clientCommand
+	publish    chan publication
+	database   chan databaseJob
+	results    chan databaseResult
+	workers    sync.WaitGroup
 
 	// All client and room state is owned by the hub event loop.
-	clients map[*Client]bool
+	clients map[*Client]bool // false while registration is pending
 	rooms   map[string]*Room
 
 	bus          broker.Broker
@@ -40,6 +44,11 @@ type Hub struct {
 type clientCommand struct {
 	client  *Client
 	message Message
+	done    chan struct{}
+}
+
+func (command clientCommand) complete() {
+	close(command.done)
 }
 
 // NewHub starts a hub using injected repositories and a broker. The caller owns
@@ -55,6 +64,9 @@ func NewHub(ctx context.Context, bus broker.Broker, roomStore store.RoomReposito
 		register:     make(chan *Client),
 		unregister:   make(chan *Client),
 		commands:     make(chan clientCommand),
+		publish:      make(chan publication, hubWorkQueueSize),
+		database:     make(chan databaseJob, hubWorkQueueSize),
+		results:      make(chan databaseResult),
 		clients:      make(map[*Client]bool),
 		rooms:        make(map[string]*Room),
 		bus:          bus,
@@ -65,6 +77,10 @@ func NewHub(ctx context.Context, bus broker.Broker, roomStore store.RoomReposito
 		roomStore:    roomStore,
 		userStore:    userStore,
 	}
+	hub.workers.Go(hub.runPublisher)
+	for range hubDatabaseWorkers {
+		hub.workers.Go(hub.runDatabaseWorker)
+	}
 	go hub.run()
 	return hub, nil
 }
@@ -72,6 +88,7 @@ func NewHub(ctx context.Context, bus broker.Broker, roomStore store.RoomReposito
 func (hub *Hub) run() {
 	defer close(hub.done)
 	defer hub.subscription.Close()
+	defer hub.workers.Wait()
 	defer hub.cancel()
 	defer func() {
 		for client := range hub.clients {
@@ -87,9 +104,11 @@ func (hub *Hub) run() {
 		case client := <-hub.unregister:
 			hub.removeClient(client)
 		case command := <-hub.commands:
-			if hub.clients[command.client] {
-				hub.handleCommand(command)
+			if !hub.clients[command.client] || !hub.handleCommand(command) {
+				command.complete()
 			}
+		case result := <-hub.results:
+			hub.applyDatabaseResult(result)
 		case msg, ok := <-hub.subscription.Messages():
 			if !ok {
 				if hub.ctx.Err() == nil {
@@ -111,14 +130,8 @@ func (hub *Hub) Close() error {
 }
 
 func (hub *Hub) addClient(client *Client) {
-	ctx, cancel := context.WithTimeout(hub.ctx, 5*time.Second)
-	defer cancel()
-	if _, err := hub.userStore.AddUser(ctx, client.User); err != nil {
-		slog.ErrorContext(ctx, "register client failed", "error", err, "client.id", client.Xid)
-		client.close()
-		return
-	}
-	hub.clients[client] = true
+	hub.clients[client] = false
+	hub.queueDatabase(databaseJob{client: client, user: client.User})
 }
 
 func (hub *Hub) removeClient(client *Client) {
@@ -131,28 +144,52 @@ func (hub *Hub) removeClient(client *Client) {
 	client.close()
 }
 
-func (hub *Hub) handleCommand(command clientCommand) {
+// A true result transfers completion to a worker (or its result handler).
+func (hub *Hub) handleCommand(command clientCommand) bool {
 	client, msg := command.client, command.message
+	select {
+	case <-client.done:
+		return false
+	default:
+	}
 	if msg.Room == nil {
-		return
+		return false
 	}
 	switch msg.Type {
 	case message.Normal.String():
 		room := hub.rooms[msg.Room.Xid]
 		if room == nil || !client.rooms[room] {
-			return
+			return false
 		}
 		msg.Room, msg.Sender, msg.Action = room, client, message.SendMessage.String()
-		ctx, cancel := context.WithTimeout(hub.ctx, 5*time.Second)
-		defer cancel()
-		if err := hub.bus.Publish(ctx, "room."+room.Xid, msg.encode()); err != nil {
-			slog.ErrorContext(ctx, "publish room message failed", "error", err,
-				"client.id", client.Xid, "room.id", room.Xid)
+		// Encode on the hub so workers only receive an immutable payload and IDs.
+		job := publication{
+			topic: "room." + room.Xid, payload: msg.encode(),
+			clientID: client.Xid, roomID: room.Xid, done: command.done,
+			deadline: time.Now().Add(hubWorkTimeout),
+		}
+		select {
+		case hub.publish <- job:
+			return true
+		default:
+			hub.overloaded(client, "publish")
 		}
 	case message.Command.String():
 		switch msg.Action {
 		case message.JoinRoom.String():
-			hub.joinRoom(client, msg.Room.Name)
+			name := strings.TrimSpace(msg.Room.Name)
+			if name == "" {
+				return false
+			}
+			for _, room := range hub.rooms {
+				if room.Name == name {
+					hub.joinRoom(client, room)
+					return false
+				}
+			}
+			return hub.queueDatabase(databaseJob{
+				client: client, user: client.User, roomName: name, done: command.done,
+			})
 		case message.LeaveRoom.String():
 			if room := hub.rooms[msg.Room.Xid]; room != nil && client.rooms[room] {
 				delete(client.rooms, room)
@@ -160,18 +197,10 @@ func (hub *Hub) handleCommand(command clientCommand) {
 			}
 		}
 	}
+	return false
 }
 
-func (hub *Hub) joinRoom(client *Client, name string) {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return
-	}
-	room, err := hub.findRoomByName(&client.User, name)
-	if err != nil {
-		slog.ErrorContext(hub.ctx, "join room failed", "error", err, "client.id", client.Xid, "room.name", name)
-		return
-	}
+func (hub *Hub) joinRoom(client *Client, room *Room) {
 	if !client.rooms[room] {
 		for previous := range client.rooms {
 			delete(client.rooms, previous)
@@ -187,28 +216,7 @@ func (hub *Hub) joinRoom(client *Client, name string) {
 	client.enqueue(notification.encode())
 }
 
-func (hub *Hub) findRoomByName(client *store.User, name string) (*Room, error) {
-	for _, room := range hub.rooms {
-		if room.Name == name {
-			return room, nil
-		}
-	}
-	ctx, cancel := context.WithTimeout(hub.ctx, 5*time.Second)
-	defer cancel()
-	dbRoom, err := hub.roomStore.FindRoomByName(ctx, name)
-	if errors.Is(err, store.ErrNotFound) {
-		dbRoom, err = hub.roomStore.AddRoom(ctx, store.Room{Xid: xid.New().String(), Name: name, Owner_ID: client.Xid})
-		if err != nil {
-			// Another server may have created the same room concurrently.
-			if existing, findErr := hub.roomStore.FindRoomByName(ctx, name); findErr == nil {
-				dbRoom, err = existing, nil
-			}
-		}
-	}
-	if err != nil {
-		return nil, err
-	}
-	room := &Room{Room: *dbRoom, clients: make(map[*Client]bool)}
-	hub.rooms[room.Xid] = room
-	return room, nil
+func (hub *Hub) overloaded(client *Client, queue string) {
+	slog.WarnContext(hub.ctx, "hub work queue full; disconnecting client", "queue", queue, "client.id", client.Xid)
+	hub.removeClient(client)
 }

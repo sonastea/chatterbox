@@ -121,12 +121,17 @@ func testSimulationBackpressureRecovery(t *testing.T) {
 			return ctx.Err()
 		}
 		bus.readable.Store(true)
+		// Wake the hub's select so it observes the now-readable subscription.
+		// A different client's command must proceed while publication is blocked.
+		if err := sim.write(ctx, 1, simulationMessage{Type: message.Command.String()}); err != nil {
+			return err
+		}
 		select {
 		case publishErr = <-bus.result:
 		case <-ctx.Done():
 			return ctx.Err()
 		}
-		if publishErr != nil && !errors.Is(publishErr, context.DeadlineExceeded) {
+		if publishErr != nil {
 			return publishErr
 		}
 		// Publish from outside the hub: this can wait for capacity while the
@@ -164,13 +169,9 @@ func testSimulationBackpressureRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Best-effort fan-out may lose the saturated publish on its deadline. If a
-	// future hub implementation drains concurrently, successful delivery is
-	// also valid, but it must reach both clients exactly once.
-	wantBlocked := 0
-	if publishErr == nil {
-		wantBlocked = len(sim.peers)
-	}
+	// Draining must proceed concurrently, delivering the blocked publish to
+	// both clients exactly once without waiting for its deadline.
+	wantBlocked := len(sim.peers)
 	if len(seenBlocked) != wantBlocked {
 		t.Fatalf("saturated publication delivered to %d clients, want %d (publish error: %v)", len(seenBlocked), wantBlocked, publishErr)
 	}
