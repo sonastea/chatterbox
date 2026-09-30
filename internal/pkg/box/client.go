@@ -62,26 +62,6 @@ func (client *Client) enqueue(msg []byte) {
 	}
 }
 
-func (client *Client) GetId() int {
-	return client.Id
-}
-
-func (client *Client) GetXid() string {
-	return client.Xid
-}
-
-func (client *Client) GetName() string {
-	return client.Name
-}
-
-func (client *Client) GetEmail() string {
-	return client.Email
-}
-
-func (client *Client) GetPassword() string {
-	return client.Password
-}
-
 func (client *Client) readPump() {
 	defer func() {
 		client.close()

@@ -12,30 +12,6 @@ type Room struct {
 	clients map[*Client]bool
 }
 
-func (room *Room) GetId() int {
-	return room.ID
-}
-
-func (room *Room) GetXid() string {
-	return room.Xid
-}
-
-func (room *Room) GetPrivate() bool {
-	return room.Private
-}
-
-func (room *Room) GetName() string {
-	return room.Name
-}
-
-func (room *Room) GetDescription() string {
-	return room.Description
-}
-
-func (room *Room) GetOwnerId() string {
-	return room.Owner_ID
-}
-
 func (room *Room) registerClientInRoom(client *Client) {
 	msg := Message{
 		Type:   string(message.Server),
