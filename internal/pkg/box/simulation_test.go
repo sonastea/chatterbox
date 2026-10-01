@@ -19,6 +19,7 @@ import (
 	"github.com/sonastea/chatterbox/internal/pkg/broker"
 	"github.com/sonastea/chatterbox/internal/pkg/database"
 	"github.com/sonastea/chatterbox/internal/pkg/store"
+	"github.com/sonastea/chatterbox/internal/testutil"
 	"github.com/sonastea/chatterbox/lib/chatterbox/message"
 )
 
@@ -531,7 +532,7 @@ func TestSimulatedUsers(t *testing.T) {
 	t.Cleanup(cancel)
 	local := cfg.URL == ""
 	if local {
-		logs := captureLogs(t)
+		logs := testutil.CaptureLogs(t)
 		t.Cleanup(func() {
 			if t.Failed() {
 				t.Logf("Local server logs:\n%s", logs.String())

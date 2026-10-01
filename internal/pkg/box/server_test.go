@@ -5,8 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
-	"log/slog"
 	"net/http/httptest"
 	"os"
 	"strings"
@@ -17,8 +15,8 @@ import (
 	"github.com/rs/xid"
 	"github.com/sonastea/chatterbox/internal/pkg/broker"
 	"github.com/sonastea/chatterbox/internal/pkg/database"
-	"github.com/sonastea/chatterbox/internal/pkg/logging"
 	"github.com/sonastea/chatterbox/internal/pkg/store"
+	"github.com/sonastea/chatterbox/internal/testutil"
 	"github.com/sonastea/chatterbox/lib/chatterbox/message"
 )
 
@@ -178,7 +176,7 @@ func TestStartLogsTransport(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			output := captureLogs(t)
+			output := testutil.CaptureLogs(t)
 
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
@@ -196,11 +194,11 @@ func TestStartLogsTransport(t *testing.T) {
 			if err := server.Start(ctx); err != nil {
 				t.Fatal(err)
 			}
-			record := decodeLogRecord(t, output.Bytes())
+			_, record := testutil.DecodeLog(t, output.Bytes())
 			if record.Body.StringValue != "chatterbox is now listening" || record.SeverityNumber != 9 {
 				t.Fatalf("unexpected startup log: %+v", record)
 			}
-			attrs := record.attributeMap()
+			attrs := record.AttributeMap()
 			if attrs["address"]["stringValue"] != "127.0.0.1:0" || attrs["transport"]["stringValue"] != test.transport || attrs["tls.enabled"]["boolValue"] != (test.cert != "") {
 				t.Fatalf("unexpected startup attributes: %+v", attrs)
 			}
@@ -210,24 +208,24 @@ func TestStartLogsTransport(t *testing.T) {
 
 func TestErrorsUseOTLPJSON(t *testing.T) {
 	t.Run("websocket upgrade", func(t *testing.T) {
-		output := captureLogs(t)
+		output := testutil.CaptureLogs(t)
 		serveWs(nil, httptest.NewRecorder(), httptest.NewRequest("GET", "/ws", nil))
-		record := decodeLogRecord(t, output.Bytes())
-		if record.SeverityNumber != 13 || record.Body.StringValue != "websocket upgrade failed" || record.attributeMap()["error"]["stringValue"] == "" {
+		_, record := testutil.DecodeLog(t, output.Bytes())
+		if record.SeverityNumber != 13 || record.Body.StringValue != "websocket upgrade failed" || record.AttributeMap()["error"]["stringValue"] == "" {
 			t.Fatalf("unexpected upgrade error log: %+v", record)
 		}
 	})
 	t.Run("invalid message", func(t *testing.T) {
-		output := captureLogs(t)
+		output := testutil.CaptureLogs(t)
 		client := &Client{User: store.User{Xid: "client-id"}, hub: &Hub{ctx: context.Background()}}
 		client.handleIncomingMessage([]byte("not-json"))
-		record := decodeLogRecord(t, output.Bytes())
-		if record.SeverityNumber != 13 || record.Body.StringValue != "invalid JSON message" || record.attributeMap()["client.id"]["stringValue"] != "client-id" {
+		_, record := testutil.DecodeLog(t, output.Bytes())
+		if record.SeverityNumber != 13 || record.Body.StringValue != "invalid JSON message" || record.AttributeMap()["client.id"]["stringValue"] != "client-id" {
 			t.Fatalf("unexpected invalid-message log: %+v", record)
 		}
 	})
 	t.Run("http diagnostics", func(t *testing.T) {
-		output := captureLogs(t)
+		output := testutil.CaptureLogs(t)
 		bus := broker.NewMemory()
 		defer bus.Close()
 		server, err := NewServer(context.Background(), &Config{}, bus, nil, nil)
@@ -236,61 +234,11 @@ func TestErrorsUseOTLPJSON(t *testing.T) {
 		}
 		defer server.Close()
 		server.server.ErrorLog.Print("http: test error")
-		record := decodeLogRecord(t, output.Bytes())
-		if record.SeverityNumber != 17 || record.Body.StringValue != "http: test error" || record.attributeMap()["component"]["stringValue"] != "http" {
+		_, record := testutil.DecodeLog(t, output.Bytes())
+		if record.SeverityNumber != 17 || record.Body.StringValue != "http: test error" || record.AttributeMap()["component"]["stringValue"] != "http" {
 			t.Fatalf("unexpected HTTP diagnostic log: %+v", record)
 		}
 	})
-}
-
-func captureLogs(t *testing.T) *bytes.Buffer {
-	t.Helper()
-	previousLogger, previousOutput, previousFlags := slog.Default(), log.Writer(), log.Flags()
-	t.Cleanup(func() {
-		slog.SetDefault(previousLogger)
-		log.SetOutput(previousOutput)
-		log.SetFlags(previousFlags)
-	})
-	var output bytes.Buffer
-	slog.SetDefault(slog.New(logging.NewHandler(&output, "chatterbox")))
-	return &output
-}
-
-type testLogRecord struct {
-	SeverityNumber int `json:"severityNumber"`
-	Body           struct {
-		StringValue string `json:"stringValue"`
-	} `json:"body"`
-	Attributes []struct {
-		Key   string         `json:"key"`
-		Value map[string]any `json:"value"`
-	} `json:"attributes"`
-}
-
-func (r testLogRecord) attributeMap() map[string]map[string]any {
-	attrs := make(map[string]map[string]any)
-	for _, attr := range r.Attributes {
-		attrs[attr.Key] = attr.Value
-	}
-	return attrs
-}
-
-func decodeLogRecord(t *testing.T, data []byte) testLogRecord {
-	t.Helper()
-	var request struct {
-		ResourceLogs []struct {
-			ScopeLogs []struct {
-				LogRecords []testLogRecord `json:"logRecords"`
-			} `json:"scopeLogs"`
-		} `json:"resourceLogs"`
-	}
-	if err := json.Unmarshal(data, &request); err != nil {
-		t.Fatalf("invalid OTLP JSON: %v: %s", err, data)
-	}
-	if len(request.ResourceLogs) != 1 || len(request.ResourceLogs[0].ScopeLogs) != 1 || len(request.ResourceLogs[0].ScopeLogs[0].LogRecords) != 1 {
-		t.Fatalf("expected one OTLP log record: %s", data)
-	}
-	return request.ResourceLogs[0].ScopeLogs[0].LogRecords[0]
 }
 
 func TestSlowClientDoesNotBlockRoom(t *testing.T) {

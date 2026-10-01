@@ -4,11 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 type Config struct {
@@ -22,6 +25,8 @@ const (
 	SQLite   Dialect = "sqlite"
 	Postgres Dialect = "postgres"
 )
+
+const sqliteBusyTimeout = 5 * time.Second
 
 // Table qualifies a static application table name for the selected dialect.
 func (d Dialect) Table(name string) string {
@@ -65,7 +70,7 @@ func Open(ctx context.Context, cfg Config) (*DB, error) {
 			separator = "&"
 		}
 		// Apply these to every connection, including connections reopened by database/sql.
-		dsn += separator + "_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
+		dsn += fmt.Sprintf("%s_pragma=foreign_keys(1)&_pragma=busy_timeout(%d)&_pragma=journal_mode(WAL)", separator, sqliteBusyTimeout.Milliseconds())
 	case "postgres", "postgresql", "pgx":
 		driver, dialect = "pgx", Postgres
 		if dsn == "" {
@@ -85,7 +90,7 @@ func Open(ctx context.Context, cfg Config) (*DB, error) {
 		conn.SetMaxIdleConns(1)
 	}
 	db := &DB{DB: conn, Dialect: dialect}
-	if err := conn.PingContext(ctx); err != nil {
+	if err := db.ping(ctx); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("connect to %s database: %w", dialect, err)
 	}
@@ -94,6 +99,31 @@ func Open(ctx context.Context, cfg Config) (*DB, error) {
 		return nil, err
 	}
 	return db, nil
+}
+
+// ping retries SQLite connection initialization because switching to WAL can
+// return SQLITE_BUSY without invoking SQLite's configured busy handler.
+func (db *DB) ping(ctx context.Context) error {
+	if db.Dialect != SQLite {
+		return db.PingContext(ctx)
+	}
+	ctx, cancel := context.WithTimeout(ctx, sqliteBusyTimeout)
+	defer cancel()
+	for {
+		err := db.PingContext(ctx)
+		if contextErr := ctx.Err(); contextErr != nil {
+			return contextErr
+		}
+		var sqliteErr *sqlite.Error
+		if !errors.As(err, &sqliteErr) || sqliteErr.Code()&0xff != sqlite3.SQLITE_BUSY {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
 }
 
 func (db *DB) Migrate(ctx context.Context) error {

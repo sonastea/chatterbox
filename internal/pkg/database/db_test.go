@@ -2,6 +2,8 @@ package database
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -83,6 +85,64 @@ func TestInvalidConfig(t *testing.T) {
 	}
 }
 
+func TestSQLiteStartupWaitsForLock(t *testing.T) {
+	for _, action := range []string{"release", "cancel"} {
+		t.Run(action, func(t *testing.T) {
+			cfg := Config{URL: filepath.Join(t.TempDir(), "locked.db")}
+			// Hold a write transaction in rollback-journal mode so switching to
+			// WAL during Open must wait for another connection's lock.
+			locker, err := sql.Open("sqlite", cfg.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer locker.Close()
+			if _, err := locker.Exec("CREATE TABLE lock_test (id INTEGER)"); err != nil {
+				t.Fatal(err)
+			}
+			tx, err := locker.Begin()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback()
+			if _, err := tx.Exec("INSERT INTO lock_test VALUES (1)"); err != nil {
+				t.Fatal(err)
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			result := make(chan error, 1)
+			go func() {
+				db, err := Open(ctx, cfg)
+				if err == nil {
+					err = db.Close()
+				}
+				result <- err
+			}()
+			select {
+			case err := <-result:
+				t.Fatalf("startup returned while the database was locked: %v", err)
+			case <-time.After(50 * time.Millisecond):
+			}
+
+			var want error
+			if action == "cancel" {
+				cancel()
+				want = context.Canceled
+			} else if err := tx.Rollback(); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case err := <-result:
+				if !errors.Is(err, want) {
+					t.Fatalf("startup error = %v, want %v", err, want)
+				}
+			case <-time.After(time.Second):
+				t.Fatalf("startup did not finish after %s", action)
+			}
+		})
+	}
+}
+
 func TestConcurrentStartup(t *testing.T) {
 	for _, test := range []struct {
 		name string
@@ -100,10 +160,12 @@ func TestConcurrentStartup(t *testing.T) {
 			defer cancel()
 			var wg sync.WaitGroup
 			errors := make(chan error, 6)
+			start := make(chan struct{})
 			for i := 0; i < 6; i++ {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
+					<-start
 					db, err := Open(ctx, test.cfg)
 					if err != nil {
 						errors <- err
@@ -115,6 +177,7 @@ func TestConcurrentStartup(t *testing.T) {
 					}
 				}()
 			}
+			close(start)
 			wg.Wait()
 			close(errors)
 			for err := range errors {
