@@ -405,7 +405,7 @@ func TestSimulationTrafficChecks(t *testing.T) {
 	}
 }
 
-func TestSimulationExternalEndpoint(t *testing.T) {
+func TestE2ESimulationExternalEndpoint(t *testing.T) {
 	clearSimulationEnv(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)

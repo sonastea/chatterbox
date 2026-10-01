@@ -31,8 +31,9 @@ type Server struct {
 
 var (
 	upgrader = websocket.Upgrader{
-		ReadBufferSize:  1024,
-		WriteBufferSize: 1024,
+		ReadBufferSize: 1024,
+		// Fit queued chat batches into fewer socket writes.
+		WriteBufferSize: 4096,
 		// Returning true for now, but should check origin.
 		CheckOrigin: func(r *http.Request) bool {
 			slog.InfoContext(r.Context(), "websocket connection origin", "origin", r.Header.Get("Origin"))

@@ -20,7 +20,7 @@ import (
 	"github.com/sonastea/chatterbox/lib/chatterbox/message"
 )
 
-func TestWebSocketFanout(t *testing.T) {
+func TestE2EWebSocketFanout(t *testing.T) {
 	for _, driver := range []string{"memory", "redis", "valkey", "nats", "rabbitmq"} {
 		t.Run(driver, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -37,7 +37,7 @@ func TestWebSocketFanout(t *testing.T) {
 			} else {
 				address := os.Getenv("TEST_" + strings.ToUpper(driver) + "_URL")
 				if address == "" {
-					t.Skip("run scripts/test-integration.sh for external brokers")
+					t.Skip("use go run ./tests/e2e for external brokers")
 				}
 				firstBus, err = broker.Open(ctx, broker.Config{Driver: driver, URL: address})
 				if err != nil {
@@ -102,7 +102,7 @@ func TestWebSocketFanout(t *testing.T) {
 	}
 }
 
-func TestShutdownClosesWebSocketsAndKeepsRooms(t *testing.T) {
+func TestE2EShutdownClosesWebSocketsAndKeepsRooms(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	db, err := database.Open(ctx, database.Config{URL: ":memory:"})
@@ -137,7 +137,7 @@ func TestShutdownClosesWebSocketsAndKeepsRooms(t *testing.T) {
 	}
 }
 
-func TestStartHonorsCancellation(t *testing.T) {
+func TestE2EStartHonorsCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	db, err := database.Open(ctx, database.Config{URL: ":memory:"})
 	if err != nil {
@@ -260,7 +260,7 @@ func TestSlowClientDoesNotBlockRoom(t *testing.T) {
 	}
 }
 
-func testServer(t *testing.T, ctx context.Context, db *database.DB, bus broker.Broker) (string, *Server) {
+func testServer(t testing.TB, ctx context.Context, db *database.DB, bus broker.Broker) (string, *Server) {
 	t.Helper()
 	server, err := NewServer(ctx, &Config{}, bus, &store.RoomStore{DB: db}, &store.UserStore{DB: db})
 	if err != nil {
@@ -271,7 +271,7 @@ func testServer(t *testing.T, ctx context.Context, db *database.DB, bus broker.B
 	return "ws" + strings.TrimPrefix(http.URL, "http") + "/ws", server
 }
 
-func connect(t *testing.T, url string) *websocket.Conn {
+func connect(t testing.TB, url string) *websocket.Conn {
 	t.Helper()
 	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
 	if err != nil {
@@ -281,7 +281,7 @@ func connect(t *testing.T, url string) *websocket.Conn {
 	return conn
 }
 
-func writeMessage(t *testing.T, conn *websocket.Conn, msg Message) {
+func writeMessage(t testing.TB, conn *websocket.Conn, msg Message) {
 	t.Helper()
 	conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	if err := conn.WriteJSON(msg); err != nil {
@@ -289,7 +289,7 @@ func writeMessage(t *testing.T, conn *websocket.Conn, msg Message) {
 	}
 }
 
-func join(t *testing.T, conn *websocket.Conn, name string) *Room {
+func join(t testing.TB, conn *websocket.Conn, name string) *Room {
 	t.Helper()
 	writeMessage(t, conn, Message{Type: message.Command.String(), Action: message.JoinRoom.String(), Room: &Room{Room: store.Room{Name: name}}})
 	event := readEvent(t, conn, message.NotifyJoinRoomMessage.String())
@@ -299,7 +299,7 @@ func join(t *testing.T, conn *websocket.Conn, name string) *Room {
 	return event.Room
 }
 
-func readEvent(t *testing.T, conn *websocket.Conn, action string) Message {
+func readEvent(t testing.TB, conn *websocket.Conn, action string) Message {
 	t.Helper()
 	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	for {

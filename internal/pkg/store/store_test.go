@@ -14,7 +14,7 @@ import (
 	"github.com/sonastea/chatterbox/internal/pkg/database"
 )
 
-func TestRepositories(t *testing.T) {
+func TestIntegrationRepositories(t *testing.T) {
 	cases := []struct {
 		name string
 		cfg  database.Config
@@ -26,7 +26,7 @@ func TestRepositories(t *testing.T) {
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
 			if test.name == "postgres" && test.cfg.URL == "" {
-				t.Skip("set TEST_POSTGRES_URL or run scripts/test-integration.sh")
+				t.Skip("set TEST_POSTGRES_URL or use go run ./tests/integration")
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()

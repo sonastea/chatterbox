@@ -13,7 +13,7 @@ import (
 	"github.com/rs/xid"
 )
 
-func TestBrokerContract(t *testing.T) {
+func TestIntegrationBrokerContract(t *testing.T) {
 	t.Run("memory", func(t *testing.T) {
 		bus := NewMemory()
 		testContract(t, bus, bus)
@@ -23,7 +23,7 @@ func TestBrokerContract(t *testing.T) {
 			variable := "TEST_" + map[string]string{"redis": "REDIS", "valkey": "VALKEY", "nats": "NATS", "rabbitmq": "RABBITMQ"}[driver] + "_URL"
 			address := os.Getenv(variable)
 			if address == "" {
-				t.Skip("set " + variable + " or run scripts/test-integration.sh")
+				t.Skip("set " + variable + " or use go run ./tests/integration")
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
@@ -262,13 +262,13 @@ func TestInvalidConfig(t *testing.T) {
 	}
 }
 
-func TestTransportClosure(t *testing.T) {
+func TestIntegrationTransportClosure(t *testing.T) {
 	for _, driver := range []string{"nats", "rabbitmq"} {
 		t.Run(driver, func(t *testing.T) {
 			variable := "TEST_" + map[string]string{"nats": "NATS", "rabbitmq": "RABBITMQ"}[driver] + "_URL"
 			address := os.Getenv(variable)
 			if address == "" {
-				t.Skip("set " + variable + " or run scripts/test-integration.sh")
+				t.Skip("set " + variable + " or use go run ./tests/integration")
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()

@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-func TestSQLite(t *testing.T) {
+func TestIntegrationSQLite(t *testing.T) {
 	for _, dsn := range []string{":memory:", "file::memory:?cache=shared", filepath.Join(t.TempDir(), "chatterbox.db")} {
 		t.Run(dsn, func(t *testing.T) {
 			db, err := Open(context.Background(), Config{URL: dsn})
@@ -42,7 +42,7 @@ func TestSQLite(t *testing.T) {
 	}
 }
 
-func TestSQLitePersistence(t *testing.T) {
+func TestIntegrationSQLitePersistence(t *testing.T) {
 	cfg := Config{URL: filepath.Join(t.TempDir(), "persistent.db")}
 	db, err := Open(context.Background(), cfg)
 	if err != nil {
@@ -85,7 +85,7 @@ func TestInvalidConfig(t *testing.T) {
 	}
 }
 
-func TestSQLiteStartupWaitsForLock(t *testing.T) {
+func TestIntegrationSQLiteStartupWaitsForLock(t *testing.T) {
 	for _, action := range []string{"release", "cancel"} {
 		t.Run(action, func(t *testing.T) {
 			cfg := Config{URL: filepath.Join(t.TempDir(), "locked.db")}
@@ -143,7 +143,7 @@ func TestSQLiteStartupWaitsForLock(t *testing.T) {
 	}
 }
 
-func TestConcurrentStartup(t *testing.T) {
+func TestIntegrationConcurrentStartup(t *testing.T) {
 	for _, test := range []struct {
 		name string
 		cfg  Config
@@ -154,7 +154,7 @@ func TestConcurrentStartup(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if test.name == "postgres" && test.cfg.URL == "" {
-				t.Skip("set TEST_POSTGRES_URL or run scripts/test-integration.sh")
+				t.Skip("set TEST_POSTGRES_URL or use go run ./tests/integration")
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()

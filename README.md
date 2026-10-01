@@ -164,30 +164,85 @@ provider-specific credentials).
 
 ## Tests
 
+Test runners live under `tests/`. Run the suite for the responsibility you are
+working on from the repository root:
+
+| Command | Responsibility | Infrastructure |
+| --- | --- | --- |
+| `go run ./tests/unit` | Configuration, logging, hub state/workers, in-memory broker behavior, and simulation helpers | None |
+| `go run ./tests/integration` | Database initialization/persistence, repository contracts, broker adapters, and transport closure | Docker Compose |
+| `go run ./tests/e2e` | Cross-hub WebSocket fan-out, room authorization, shutdown/restart, and existing-endpoint flows | Docker Compose |
+| `go run ./tests/simulations` | Concurrent user traffic, ordering, membership churn, payload boundaries, and backpressure recovery | Isolated local server, or `SIM_URL` |
+| `go run ./tests/benchmarks` | Cached-room lookup and WebSocket fan-out timing, throughput, and allocations | Isolated local server |
+
+Correctness runners enable race detection, disable caching, and print verbose
+results. The benchmark runner defaults to ten samples with allocation reporting.
+All runners forward Go test flags and return a nonzero exit status on failure:
+
 ```sh
-# No external services required
-go test -race ./...
-
-# Simulate concurrent WebSocket users against an isolated local test server
-go run ./simulations
-
-# Starts PostgreSQL, Redis, Valkey, NATS, and RabbitMQ using Docker Compose,
-# runs race-enabled repository, broker-contract, and cross-hub WebSocket tests,
-# then removes only the test stack and its volumes.
-./scripts/test-integration.sh
+go run ./tests/unit -run '^TestHub' -timeout=2m
+go run ./tests/integration -run '^TestIntegrationBrokerContract$/redis'
+go run ./tests/e2e -run '^TestE2EWebSocketFanout$/nats'
+go run ./tests/benchmarks -bench '^BenchmarkWebSocketFanout$' -benchtime=2s
 ```
 
-If Compose is installed as a standalone binary, the script also accepts
-`DOCKER_COMPOSE=/path/to/docker-compose`.
+Tests stay alongside the packages they exercise. Name new database/broker tests
+`TestIntegration...` and complete application-flow tests `TestE2E...` to include
+them in the appropriate runner. `TestSimulatedUsers` is the simulation suite;
+other `Test...` functions belong to the unit suite. CI runs each correctness suite.
+
+Integration and E2E runners start PostgreSQL, Redis, Valkey, NATS, and RabbitMQ
+through the shared Docker launcher, then remove the test stack and its volumes
+on success or failure. Both `docker compose` and standalone `docker-compose` are
+detected automatically; `DOCKER_COMPOSE=/path/to/docker-compose` overrides discovery.
+
+For a combined run, `go test -race ./...` runs all local tests and skips unconfigured
+external backends. `./scripts/test-integration.sh` runs the full correctness suite
+with all Docker backends enabled.
 
 The Compose stack binds test ports on loopback: `15432`, `16379`, `16380`,
 `14222`, and `15672`. Individual integrations can instead be enabled with
 `TEST_POSTGRES_URL`, `TEST_REDIS_URL`, `TEST_VALKEY_URL`, `TEST_NATS_URL`, or
 `TEST_RABBITMQ_URL`. Use a **dedicated test database/broker** for these variables.
 
+### Performance benchmarks
+
+`BenchmarkWebSocketFanout` uses real loopback WebSockets, isolated in-memory
+SQLite, and the memory broker. Each operation sends 32 messages from a rotating
+sender and waits for every room member's delivery. Connection setup and joins are
+excluded. It covers 2 and 20 clients with 64- and 700-byte message bodies; allocation
+counts include both the server and benchmark clients.
+
+```sh
+# Save a baseline, repeat after a change with > after.txt, then compare.
+go run ./tests/benchmarks -bench '^BenchmarkWebSocketFanout$' > before.txt
+benchstat before.txt after.txt
+
+# Profile the larger fan-out workload while it is running.
+go test ./internal/pkg/box -run '^$' -bench '^BenchmarkWebSocketFanout/clients=20/body=700$' -benchtime=5s -cpuprofile=cpu.out -memprofile=heap.out -trace=trace.out -o fanout.test
+go tool pprof -top cpu.out
+go tool pprof -alloc_space heap.out
+go tool trace trace.out
+```
+
+On an Apple M1 with Go 1.27.1 (ten runs, September 2026), increasing the WebSocket
+write buffer from 1 KB to 4 KB reduced time per 32-message burst as follows:
+
+| Clients | Body bytes | Before | After | Delivery throughput change |
+| --- | --- | --- | --- | --- |
+| 2 | 64 | 412 µs | 411 µs | No significant change |
+| 2 | 700 | 592 µs | 585 µs | +1.2% |
+| 20 | 64 | 1.123 ms | 1.078 ms | +4.2% |
+| 20 | 700 | 1.769 ms | 1.560 ms | +13.4% |
+
+The larger buffer reduces fragmented socket writes and adds 3 KB of configured
+buffer capacity per connection. Total allocated bytes per burst stayed within 1%
+of the baseline; allocation counts increased by up to 6.9% as batching changed.
+These are local workload measurements; rerun on deployment hardware to compare.
+
 ### Simulated users
 
-`go run ./simulations` connects 10 users to 2 rooms and sends 10 chat messages
+`go run ./tests/simulations` connects 10 users to 2 rooms and sends 10 chat messages
 per user concurrently. It checks every expected delivery, including sender echoes,
 and fails on missing messages, duplicates, incorrect sender identities, or messages
 leaking between rooms. The simulation also verifies:
@@ -224,13 +279,13 @@ test flags such as `-timeout=2m`. `./scripts/test-users.sh` is an equivalent sho
 
 ```sh
 # More users and messages, with a pause between each user's sends
-SIM_USERS=50 SIM_ROOMS=5 SIM_MESSAGES=20 SIM_INTERVAL=25ms go run ./simulations
+SIM_USERS=50 SIM_ROOMS=5 SIM_MESSAGES=20 SIM_INTERVAL=25ms go run ./tests/simulations
 
 # Test an already-running server and its configured database/broker
-SIM_URL=ws://localhost:8443/ws go run ./simulations
+SIM_URL=ws://localhost:8443/ws go run ./tests/simulations
 
 # Burst traffic, with a larger per-phase timeout
-SIM_USERS=50 SIM_ROOMS=5 SIM_MESSAGES=50 SIM_INTERVAL=0s SIM_TIMEOUT=30s go run ./simulations
+SIM_USERS=50 SIM_ROOMS=5 SIM_MESSAGES=50 SIM_INTERVAL=0s SIM_TIMEOUT=30s go run ./tests/simulations
 ```
 
 | Variable | Default | Description |
@@ -253,9 +308,9 @@ or proof of production readiness. Larger rooms multiply fan-out: 10 users in
 Overloading the server can legitimately drop best-effort broker events or disconnect
 slow clients; the simulation reports those as failures. Late unexpected messages
 are also checked during 200ms observation windows while a user remains outside its
-room, before closing connections for reconnect, and at the end. Use the full unit and
-Docker integration suites above to cover configuration, persistence, shutdown, and
-all external broker adapters.
+room, before closing connections for reconnect, and at the end. Use the unit,
+integration, and E2E suites above to cover configuration, persistence, shutdown,
+and all external broker adapters.
 
 The hub uses one ordered publication worker and four database workers, each work
 queue bounded to 256 entries. Each connection waits for its outstanding command,
